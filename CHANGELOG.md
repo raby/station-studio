@@ -6,6 +6,13 @@ this project uses semantic versioning.
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-11-22
+
+A security fix and a safer update: other websites can no longer drive
+Station Studio through your browser, Docker publishes it on this computer
+only, and an update copies the database before changing it. Released with
+station-appkit 1.1.2.
+
 ### Security
 
 - Other websites can't drive Station Studio through your browser. It
@@ -37,6 +44,20 @@ this project uses semantic versioning.
   anyone on the same network could change or delete stations.
   `docker-compose.yml` says what to change to open it to other
   computers on a network you trust.
+
+### Fixed
+
+- Station Studio closes the database connections and web responses it
+  has finished with, rather than leaving them for Python to tidy up:
+  in the import, generate and export commands, start-up seeding, the
+  Station Server link when Station Server answers with an error, and
+  the check on what's answering on Studio's port. station-appkit 1.1.2
+  does the same in the update check and the updater. Nothing changes
+  that you'd see; running the tests on Python 3.14, which flags each
+  one, found them.
+- Python 3.11, the oldest version Station Studio supports, is now
+  tested on every change, alongside the newest (3.14). The PyPI page
+  lists 3.11 to 3.14, and the tutorial no longer says 3.12 is needed.
 
 ## [1.20.3] - 2026-11-21
 
