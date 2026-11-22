@@ -11,6 +11,10 @@ mkdir -p "$dir"
 for try in 1 2 3 4 5 6 7 8; do
   gh release download latest --repo BtbN/FFmpeg-Builds --clobber \
     --pattern 'ffmpeg-master-latest-linux64-lgpl.tar.xz' --dir "$dir" && break
+  if [ "$try" = 8 ]; then
+    echo "BtbN's latest ffmpeg still isn't there after 8 tries" >&2
+    exit 1
+  fi
   echo "BtbN's latest ffmpeg isn't there just now; trying again in 30 s"
   sleep 30
 done
