@@ -22,6 +22,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -53,9 +54,21 @@ API_HEADER = "X-Station-Studio"
 _local = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
+def _local_open(*args, **kwargs):
+    """_local.open, but an HTTP error comes out closed: these calls only
+    ask whether something answers, and drop the error, which is a response
+    too (left to the garbage collector, a leak 3.13+ warns of)."""
+    try:
+        return _local.open(*args, **kwargs)
+    except urllib.error.HTTPError as exc:
+        if exc.fp is not None:
+            exc.close()
+        raise
+
+
 def _get(url: str, timeout: float = 2):
     try:
-        with _local.open(url, timeout=timeout) as resp:
+        with _local_open(url, timeout=timeout) as resp:
             return json.load(resp)
     except Exception:
         return None
@@ -86,7 +99,7 @@ def quit_instance(base: str) -> bool:
     req = urllib.request.Request(base + "api/app/quit", data=b"{}", method="POST",
                                  headers={"Content-Type": "application/json", API_HEADER: "1"})
     try:
-        _local.open(req, timeout=10).close()
+        _local_open(req, timeout=10).close()
     except Exception as exc:
         logger.warning("Could not ask the older Station Studio to quit: %s", exc)
         return False

@@ -442,3 +442,33 @@ def test_reveal_shows_what_is_in_the_exports_folder_and_nothing_else(monkeypatch
 def test_app_state_names_the_file_manager(monkeypatch):
     client, _, _ = make_app()
     assert client.get("/api/app").json()["file_manager"] in ("Finder", "File Explorer", "Files")
+
+
+def test_asking_whats_on_the_port_lets_a_404_go_closed():
+    """Something else answering 404 is dropped as "not Station Studio":
+    the error is a response too, so it's closed, not left to the gc."""
+    import gc
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from station_studio import desktop
+
+    class NotFound(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_error(404)
+
+        do_POST = do_GET
+
+        def log_message(self, *args):
+            pass
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), NotFound)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{httpd.server_address[1]}/"
+        assert desktop._get(base + "api/app/state") is None
+        assert desktop.quit_instance(base) is False
+        gc.collect()  # would warn here if one weren't closed
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
