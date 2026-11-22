@@ -86,9 +86,11 @@ dev = [
     "ruff>=0.17,<0.18",
 ]
 docs = [
-    # The docs site (`make docs-build`). Held to 9.5.x: Material has
-    # renamed theme features within minor releases.
-    "mkdocs-material>=9.5,<9.6",
+    # The docs site (`make docs-build`). Held to a minor (9.7.x): Material
+    # has renamed theme features within minor releases, so moving to the
+    # next is its own change, checked by building the site. It keeps
+    # MkDocs below 2.0 itself.
+    "mkdocs-material>=9.7,<9.8",
     # The API reference page's Swagger UI. Pre-1.0, so held to 0.1.x.
     "mkdocs-render-swagger-plugin>=0.1,<0.2",
 ]
