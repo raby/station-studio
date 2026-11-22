@@ -149,3 +149,15 @@ def test_shipped_pictures_need_no_download(tmp_path):
     for pick in with_image:
         body, ctype = p.image(pick["id"])
         assert ctype == "image/png" and body.startswith(b"\x89PNG")
+
+
+def test_a_picks_made_without_a_fetch_uses_the_one_in_place_then(tmp_path, monkeypatch):
+    """So tests can keep every PlayerApp's picks off the internet
+    (conftest.py swaps the module's fetch for an offline one)."""
+    from station_player import picks
+
+    def stand_in(url, limit):
+        return b"", ""
+
+    monkeypatch.setattr(picks, "_fetch", stand_in)
+    assert Picks(tmp_path)._fetch is stand_in

@@ -64,11 +64,19 @@ output (new strategy, bug fix), regenerate the fixtures via
 inspect the diff, and say why output changed in the pull request and
 `CHANGELOG.md`.
 
+### Python versions
+
+CI runs every suite on the oldest Python the packages promise
+(`requires-python >= 3.11`, the "all suites (oldest Python, 3.11)" job)
+and the newest (3.14, the other jobs); Station Server's Mac and Windows
+jobs use the 3.12 the apps bundle. When raising `requires-python`, move
+that job to the new oldest.
+
 ### Leaks fail the tests
 
 Every suite treats a `ResourceWarning` as an error: a socket, file,
 process, database connection or HTTP response left for the garbage
-collector fails the run (Python 3.13+, which CI's backend job runs, also
+collector fails the run (Python 3.13+, which CI's main jobs run, also
 flags SQLite connections). The failure names the object but often lands
 on a later test, the one running when it was collected. To find where it
 was opened, rerun with `PYTHONTRACEMALLOC=20`. Usual causes: an engine

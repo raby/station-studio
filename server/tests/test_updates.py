@@ -91,7 +91,8 @@ def call(tmp_path, monkeypatch):
                 body = resp.read()
                 return resp.status, (json.loads(body) if "json" in resp.headers["Content-Type"] else body)
         except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
+            with exc:  # a response too: closed once read
+                return exc.code, json.loads(exc.read())
 
     call.app = app
     yield call

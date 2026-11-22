@@ -52,7 +52,8 @@ def test_the_stream_page_shows_the_logo():
                 urllib.request.urlopen(base + path, timeout=5)
                 raise AssertionError("expected 404")
             except urllib.error.HTTPError as exc:
-                assert exc.code == 404
+                with exc:  # a response too
+                    assert exc.code == 404
         logo[0] = (PNG, "image/png")
         with urllib.request.urlopen(base + "/logo", timeout=5) as resp:
             assert resp.read() == PNG and resp.headers["Content-Type"] == "image/png"

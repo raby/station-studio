@@ -48,11 +48,11 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - uses: astral-sh/setup-uv@v10.3.2
         with:
           version: '0.13.5'  # keep in step with the other workflows
-          python-version: '3.12'
+          python-version: '3.14'
           activate-environment: true  # `python` is .venv's
       - name: install
         # Playwright drives the player page in Chromium (tests/test_browser.py).
@@ -76,11 +76,11 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - uses: astral-sh/setup-uv@v10.3.2
         with:
           version: '0.13.5'  # keep in step with the other workflows
-          python-version: '3.12'
+          python-version: '3.14'
           activate-environment: true  # `python` is .venv's
       - name: install
         run: uv sync --locked --package station-appkit
@@ -95,34 +95,59 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - uses: astral-sh/setup-uv@v10.3.2
         with:
           version: '0.13.5'  # keep in step with the other workflows
-          python-version: '3.12'
+          python-version: '3.14'
           activate-environment: true  # `python` is .venv's
       - name: install
         # ffmpeg does the decoding and encoding; the end-to-end tests need it.
-        # A static build from BtbN/FFmpeg-Builds (as in the Windows app), not
-        # apt, whose mirror has hung these jobs for half an hour at a time.
         timeout-minutes: 10
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p "$RUNNER_TEMP/ffmpeg"
-          # BtbN rebuilds its "latest" release now and then, and it's missing
-          # for a few minutes while it does: try again rather than fail.
-          for try in 1 2 3 4 5 6 7 8; do
-            gh release download latest --repo BtbN/FFmpeg-Builds --clobber \
-              --pattern 'ffmpeg-master-latest-linux64-lgpl.tar.xz' --dir "$RUNNER_TEMP/ffmpeg" && break
-            echo "BtbN's latest ffmpeg isn't there just now; trying again in 30 s"
-            sleep 30
-          done
-          tar -xf "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl.tar.xz" -C "$RUNNER_TEMP/ffmpeg"
-          echo "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl/bin" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl/bin/ffmpeg" -hide_banner -encoders | grep -q libmp3lame
+          scripts/ci_install_ffmpeg.sh
           uv sync --locked --package station-server
       - name: pytest
+        working-directory: server
+        run: python -m pytest -q
+
+  oldest-python:
+    # The oldest Python the four packages promise (requires-python >= 3.11):
+    # every suite, browsers and ffmpeg included. The jobs above run the
+    # newest; server-desktop the 3.12 the Mac and Windows apps bundle.
+    name: all suites (oldest Python, 3.11)
+    runs-on: ubuntu-24.04  # Playwright's Chromium doesn't support ubuntu-latest (26.04) yet
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: '0.13.5'  # keep in step with the other workflows
+          python-version: '3.11'
+          activate-environment: true  # `python` is .venv's
+      - name: install
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          scripts/ci_install_ffmpeg.sh
+          uv sync --locked --all-packages
+          python -m playwright install --with-deps chromium
+      - name: Station Studio
+        run: python -m pytest -q
+      - name: station-appkit
+        working-directory: appkit
+        run: python -m pytest -q
+      - name: Station Player
+        working-directory: player
+        env:
+          STATION_PLAYER_REQUIRE_BROWSER: '1'
+        run: python -m pytest -q
+      - name: Station Server
         working-directory: server
         run: python -m pytest -q
 

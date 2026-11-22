@@ -42,7 +42,8 @@ def link(api, code=None):  # noqa: F811
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return resp.status, json.loads(resp.read())
         except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
+            with exc:  # a response too: closed once read
+                return exc.code, json.loads(exc.read())
     call.code = studio["code"]
     return call
 
