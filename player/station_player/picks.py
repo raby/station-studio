@@ -132,9 +132,11 @@ def _fetch(url: str, limit: int) -> tuple[bytes, str]:
 
 
 class Picks:
-    def __init__(self, home: Path, url: str = FEED_URL, fetch=_fetch, bundled: Path = BUNDLED) -> None:
+    def __init__(self, home: Path, url: str = FEED_URL, fetch=None, bundled: Path = BUNDLED) -> None:
         self.url = url
-        self._fetch = fetch
+        # Looked up now, not when this module loaded, so tests can keep
+        # every Picks off the internet (player/tests/conftest.py).
+        self._fetch = fetch or _fetch
         self._bundled = bundled
         self._cache = home / "picks.json"
         self._images = home / "picks-images"

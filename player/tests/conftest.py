@@ -31,11 +31,18 @@ def write_itunes_xml(path: Path, tracks: list[dict], playlists: list[dict]) -> P
     return path
 
 
+def _picks_offline(url, limit):
+    raise OSError("tests don't fetch the picks")
+
+
 @pytest.fixture(autouse=True)
 def isolated_homes(tmp_path, monkeypatch):
     monkeypatch.setenv("STATION_PLAYER_HOME", str(tmp_path / "player-home"))
     monkeypatch.setenv("STATION_STUDIO_HOME", str(tmp_path / "studio-home"))
     # Tests never ask PyPI for new versions.
     monkeypatch.setattr("station_player.updates._fetch_latest", lambda *a, **k: None)
+    # ...nor the docs site for the Home page's picks: as if offline, so the
+    # shipped list shows (tests of the picks themselves pass a fetch).
+    monkeypatch.setattr("station_player.picks._fetch", _picks_offline)
     # ...and never record into the real Music folder.
     monkeypatch.setattr("station_player.recorder.default_folder", lambda: tmp_path / "recordings")
