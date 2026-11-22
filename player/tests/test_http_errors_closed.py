@@ -14,6 +14,9 @@ from station_player import __main__ as cli
 from station_player import directory, picks, server, whatson
 from station_player.httperrors import closing_errors
 
+# Taken now: tests keep picks off the internet by swapping this out.
+_picks_fetch = picks._fetch
+
 
 class _NotFound(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -53,7 +56,7 @@ def _404(exc):
 
 @pytest.mark.parametrize("fetch", [
     pytest.param(lambda url: directory._fetch(url, "test", 1024), id="station directory"),
-    pytest.param(lambda url: picks._fetch(url, 1024), id="picks"),
+    pytest.param(lambda url: _picks_fetch(url, 1024), id="picks"),
     pytest.param(lambda url: whatson._urlopen(url, 2), id="what's on"),
 ])
 def test_a_fetch_that_404s_lets_the_error_go_closed(missing, fetch):
