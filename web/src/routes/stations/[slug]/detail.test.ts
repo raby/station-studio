@@ -193,6 +193,12 @@ import Page from './+page.svelte';
  *   loading → error → missing-slug → empty-playlists → populated-playlists
  * The $page store is mocked so the route param is deterministic.
  */
+// The weeks' sort is remembered in localStorage: every test, in every
+// describe below, starts from week order.
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
 describe('station detail +page.svelte', () => {
   // The vitest.setup.ts hook (@testing-library/svelte/vitest) already
   // runs `await act(); cleanup()` per test — a duplicate afterEach
@@ -209,7 +215,6 @@ describe('station detail +page.svelte', () => {
     confirmDialogMock.mockReset();
     confirmDialogMock.mockResolvedValue(true);
     setSlug('cls'); // default for tests that don't care
-    window.localStorage.clear(); // the weeks' sort is remembered
   });
 
   it('sorts the weeks by Generated, newest first in one click, and remembers it', async () => {

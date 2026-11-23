@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   ariaSort,
   compareText,
@@ -99,7 +99,9 @@ describe('readSort and writeSort', () => {
   const fallback = { key: 'name' as Key, dir: 'asc' as const };
   beforeEach(() => {
     window.localStorage.clear();
-    vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks(); // the blocked-storage spies
   });
 
   it('remembers the choice', () => {

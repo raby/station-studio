@@ -1275,6 +1275,19 @@
       white-space: nowrap;
       width: 1px;
     }
+    /* The headings sort (plan item 12b), so their buttons take focus:
+       while one has it, the headings show, as a skip link does, rather
+       than focus landing on something invisible. */
+    .playlists-table thead:focus-within {
+      clip: auto;
+      clip-path: none;
+      height: auto;
+      margin: 0 0 0.75rem;
+      overflow: visible;
+      position: static;
+      white-space: normal;
+      width: auto;
+    }
     .playlists-table tr {
       border: 1px solid var(--border);
       border-radius: 4px;
