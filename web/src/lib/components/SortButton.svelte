@@ -56,8 +56,12 @@
     gap: 0.3rem;
     border-radius: 4px;
   }
+  /* Underlined as well as coloured: the sorted heading is already in
+     the accent colour, and still answers the mouse (it turns round). */
   .sort:hover {
     color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
   .sort:focus-visible {
     outline: 2px solid var(--accent);
