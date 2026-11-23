@@ -193,6 +193,12 @@ import Page from './+page.svelte';
  *   loading → error → missing-slug → empty-playlists → populated-playlists
  * The $page store is mocked so the route param is deterministic.
  */
+// The weeks' sort is remembered in localStorage: every test, in every
+// describe below, starts from week order.
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
 describe('station detail +page.svelte', () => {
   // The vitest.setup.ts hook (@testing-library/svelte/vitest) already
   // runs `await act(); cleanup()` per test — a duplicate afterEach
@@ -209,6 +215,39 @@ describe('station detail +page.svelte', () => {
     confirmDialogMock.mockReset();
     confirmDialogMock.mockResolvedValue(true);
     setSlug('cls'); // default for tests that don't care
+  });
+
+  it('sorts the weeks by Generated, newest first in one click, and remembers it', async () => {
+    const station = { id: 1, slug: 'cls', name: 'Classics', template: {} };
+    const weeks = [
+      { id: 1, week: 1, trace_id: 'aaaa1111', generated_at: '2026-11-01T10:00:00Z', entry_count: 50 },
+      { id: 2, week: 2, trace_id: 'bbbb2222', generated_at: '2026-11-23T10:00:00Z', entry_count: 50 },
+      { id: 3, week: 3, trace_id: 'cccc3333', generated_at: null, entry_count: 50 },
+      { id: 4, week: 4, trace_id: 'dddd4444', generated_at: '2026-11-10T10:00:00Z', entry_count: 50 },
+    ];
+    const order = () =>
+      Array.from(screen.getByTestId('playlists-table').querySelectorAll('tbody tr')).map(
+        (r) => r.querySelector('td')!.textContent,
+      );
+    getStationMock.mockResolvedValueOnce(station);
+    getStationPlaylistsMock.mockResolvedValueOnce(weeks);
+    const first = render(Page);
+    await screen.findByText('001');
+    expect(order()).toEqual(['001', '002', '003', '004']);
+
+    await fireEvent.click(screen.getByTestId('sort-generated'));
+    expect(order()).toEqual(['002', '004', '001', '003']);
+    expect(screen.getByTestId('sort-generated').closest('th')).toHaveAttribute(
+      'aria-sort',
+      'descending',
+    );
+    first.unmount();
+
+    getStationMock.mockResolvedValueOnce(station);
+    getStationPlaylistsMock.mockResolvedValueOnce(weeks);
+    render(Page);
+    await screen.findByText('001');
+    expect(order()).toEqual(['002', '004', '001', '003']);
   });
 
   it('shows "Loading…" until both fetches resolve', async () => {

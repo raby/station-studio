@@ -6,6 +6,17 @@ this project uses semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Source pools can be sorted by any column: click a heading. Last
+  imported puts the newest first in one click (a second click, the
+  oldest), and pools never imported stay at the bottom either way.
+  The list keeps your choice next time, on Source pools and on a
+  station's page alike. Names sort as you'd read them, ignoring case.
+- A station's generated weeks can be sorted the same way: Generated
+  puts the most recently generated first, to find what you just
+  regenerated. They're in week order until you choose.
+
 ## [1.21.0] - 2026-11-22
 
 A security fix and a safer update: other websites can no longer drive

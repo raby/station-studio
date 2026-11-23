@@ -56,6 +56,18 @@
   import { confirmDialog } from '$lib/confirm';
   import { formatImportedAt, importedMessage } from '$lib/pools';
   import { relativeTime } from '$lib/stations';
+  import SortButton from '$lib/components/SortButton.svelte';
+  import {
+    ariaSort,
+    compareText,
+    dateValue,
+    nextSort,
+    readSort,
+    sortRows,
+    writeSort,
+    type SortColumns,
+    type SortState,
+  } from '$lib/tableSort';
 
   export let scope: string[] | undefined = undefined;
   export let initialName: string | undefined = undefined;
@@ -74,9 +86,37 @@
   let listError: string | null = null;
   let loading = true;
 
-  // Scope filter: pure derived state, only narrows the list view.
-  $: visibleSources =
-    scope === undefined ? sources : sources.filter((s) => scope!.includes(s.name));
+  // Sorting (plan item 12b): any column, by clicking its header. Last
+  // imported's first click is newest first. The choice is remembered for
+  // this browser, and shared by /sources and the station page's embed,
+  // since it's the same table.
+  type PoolSortKey = 'name' | 'role' | 'tracks' | 'imported';
+  const poolColumns: SortColumns<Source, PoolSortKey> = {
+    name: { firstDir: 'asc', value: (s) => s.name },
+    role: { firstDir: 'asc', value: (s) => s.role },
+    tracks: { firstDir: 'desc', value: (s) => s.track_count },
+    imported: { firstDir: 'desc', value: (s) => dateValue(s.imported_at) },
+  };
+  const POOL_SORT_KEY = 'sourcePools:sort';
+  // By name (A to Z) until a header is clicked: the order the list has
+  // always had.
+  let poolSort: SortState<PoolSortKey> = readSort(POOL_SORT_KEY, poolColumns, {
+    key: 'name',
+    dir: 'asc',
+  });
+
+  function sortPoolsBy(key: PoolSortKey) {
+    poolSort = nextSort(poolSort, key, poolColumns);
+    writeSort(POOL_SORT_KEY, poolSort);
+  }
+
+  // Scope filter, then the sort: pure derived state over the list.
+  $: visibleSources = sortRows(
+    scope === undefined ? sources : sources.filter((s) => scope!.includes(s.name)),
+    poolSort,
+    poolColumns,
+    (a, b) => compareText(a.name, b.name),
+  );
 
   // ---- Add-pool form state (shared between single + batch modes) ----
   //
@@ -847,10 +887,49 @@
       <table class="sources-list" data-testid="sources-list">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Role</th>
-            <th class="num">Tracks</th>
-            <th>Last imported</th>
+            <th aria-sort={ariaSort(poolSort, 'name')}>
+              <SortButton
+                label="Name"
+                key="name"
+                sort={poolSort}
+                firstDir={poolColumns.name.firstDir}
+                on:sort={() => sortPoolsBy('name')}
+              />
+            </th>
+            <th aria-sort={ariaSort(poolSort, 'role')}>
+              <SortButton
+                label="Role"
+                key="role"
+                sort={poolSort}
+                firstDir={poolColumns.role.firstDir}
+                ascLabel="content first"
+                descLabel="reference first"
+                on:sort={() => sortPoolsBy('role')}
+              />
+            </th>
+            <th class="num" aria-sort={ariaSort(poolSort, 'tracks')}>
+              <SortButton
+                label="Tracks"
+                key="tracks"
+                sort={poolSort}
+                firstDir={poolColumns.tracks.firstDir}
+                ascLabel="fewest first"
+                descLabel="most first"
+                numeric
+                on:sort={() => sortPoolsBy('tracks')}
+              />
+            </th>
+            <th aria-sort={ariaSort(poolSort, 'imported')}>
+              <SortButton
+                label="Last imported"
+                key="imported"
+                sort={poolSort}
+                firstDir={poolColumns.imported.firstDir}
+                ascLabel="oldest first"
+                descLabel="newest first"
+                on:sort={() => sortPoolsBy('imported')}
+              />
+            </th>
             <th class="actions-col"><span class="sr-only">Actions</span></th>
           </tr>
         </thead>

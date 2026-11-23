@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { assertNoA11yViolations } from './a11y';
 import {
   createStation,
   TINY_LIBRARY_PATH,
@@ -396,5 +397,50 @@ test.describe('§16.25 — pool-import UI', () => {
     // file on disk) and disappears.
     await page.getByTestId('mode-toggle-path').click();
     await expect(page.getByTestId('itunes-hint')).toHaveCount(0);
+  });
+
+  // ---- G: sorting the list (plan item 12b) -----------------------
+
+  test('Last imported sorts newest first in one click, and stays sorted after a reload', async ({
+    page,
+  }) => {
+    // Two pools, `a-older` imported first, so name order and newest
+    // first disagree. Other tests share the DB, so only these two's
+    // order is checked.
+    await page.goto('/sources');
+    for (const name of ['e2e-sort-a-older', 'e2e-sort-b-newer']) {
+      // Last imported is kept to the second: a second apart, they can't tie.
+      if (name.endsWith('newer')) await page.waitForTimeout(1100);
+      await page.getByTestId('name-input').fill(name);
+      await page.getByTestId('file-input').setInputFiles(TINY_LIBRARY_PATH);
+      await page.getByTestId('submit-button').click();
+      await expect(
+        page.locator(`[data-testid="pool-row"][data-pool-name="${name}"]`),
+      ).toBeVisible();
+    }
+    const order = async () => {
+      const names = await page
+        .getByTestId('pool-row')
+        .evaluateAll((rows) => rows.map((r) => r.getAttribute('data-pool-name')));
+      return names.filter((n) => n?.startsWith('e2e-sort-'));
+    };
+    const imported = page.getByRole('columnheader', { name: 'Last imported' });
+
+    // By name until asked.
+    await expect.poll(order).toEqual(['e2e-sort-a-older', 'e2e-sort-b-newer']);
+
+    await page.getByTestId('sort-imported').click();
+    await expect(imported).toHaveAttribute('aria-sort', 'descending');
+    await expect.poll(order).toEqual(['e2e-sort-b-newer', 'e2e-sort-a-older']);
+
+    await page.getByTestId('sort-imported').click();
+    await expect(imported).toHaveAttribute('aria-sort', 'ascending');
+    await expect.poll(order).toEqual(['e2e-sort-a-older', 'e2e-sort-b-newer']);
+
+    // The choice is remembered.
+    await page.reload();
+    await expect(imported).toHaveAttribute('aria-sort', 'ascending');
+    await expect.poll(order).toEqual(['e2e-sort-a-older', 'e2e-sort-b-newer']);
+    await assertNoA11yViolations(page);
   });
 });
