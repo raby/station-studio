@@ -84,6 +84,9 @@ beforeEach(() => {
   confirmDialogMock.mockResolvedValue(true);
   // Default: no query params (deep-link prefill OFF).
   testSearch = '';
+  // The table's sort is remembered in localStorage: start each test
+  // from the default (by name).
+  window.localStorage.clear();
 });
 
 // c4 mid-slice review T1: per-test `vi.spyOn(window, 'confirm')` calls
@@ -1280,4 +1283,66 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     expect(uploadSourceMock).not.toHaveBeenCalled();
 
   });
+});
+
+
+describe('/sources — sorting the pools (plan item 12b)', () => {
+  const pools = [
+    { id: 1, name: 'NIGHT', role: 'content', track_count: 1884, imported_at: '2026-10-25T14:30:00Z' },
+    { id: 2, name: 'JINGLES', role: 'reference', track_count: 40, imported_at: null },
+    { id: 3, name: 'DAYTIME', role: 'content', track_count: 247, imported_at: '2026-11-20T09:00:00Z' },
+    { id: 4, name: 'breakfast', role: 'content', track_count: 247, imported_at: '2026-11-01T07:00:00Z' },
+  ];
+  const order = async () =>
+    (await screen.findAllByTestId('pool-row')).map((r) => r.getAttribute('data-pool-name'));
+  const header = (key: string) => screen.getByTestId(`sort-${key}`).closest('th')!;
+
+  it('lists pools by name until a header is clicked', async () => {
+    listSourcesMock.mockResolvedValue(pools);
+    render(Page);
+    expect(await order()).toEqual(['breakfast', 'DAYTIME', 'JINGLES', 'NIGHT']);
+    expect(header('name')).toHaveAttribute('aria-sort', 'ascending');
+    expect(header('imported')).not.toHaveAttribute('aria-sort');
+  });
+
+  it('puts the newest import first in one click, never-imported last', async () => {
+    listSourcesMock.mockResolvedValue(pools);
+    render(Page);
+    await order();
+    expect(screen.getByTestId('sort-imported')).toHaveAttribute(
+      'title',
+      'Sort by Last imported, newest first',
+    );
+    await fireEvent.click(screen.getByTestId('sort-imported'));
+    expect(await order()).toEqual(['DAYTIME', 'breakfast', 'NIGHT', 'JINGLES']);
+    expect(header('imported')).toHaveAttribute('aria-sort', 'descending');
+    expect(header('name')).not.toHaveAttribute('aria-sort');
+    // A second click: oldest first, never-imported still last.
+    await fireEvent.click(screen.getByTestId('sort-imported'));
+    expect(await order()).toEqual(['NIGHT', 'breakfast', 'DAYTIME', 'JINGLES']);
+    expect(header('imported')).toHaveAttribute('aria-sort', 'ascending');
+  });
+
+  it('sorts tracks most first, ties by name; role content first', async () => {
+    listSourcesMock.mockResolvedValue(pools);
+    render(Page);
+    await order();
+    await fireEvent.click(screen.getByTestId('sort-tracks'));
+    expect(await order()).toEqual(['NIGHT', 'breakfast', 'DAYTIME', 'JINGLES']);
+    await fireEvent.click(screen.getByTestId('sort-role'));
+    expect(await order()).toEqual(['breakfast', 'DAYTIME', 'NIGHT', 'JINGLES']);
+  });
+
+  it('remembers the choice the next time the page opens', async () => {
+    listSourcesMock.mockResolvedValue(pools);
+    const first = render(Page);
+    await order();
+    await fireEvent.click(screen.getByTestId('sort-imported'));
+    first.unmount();
+
+    render(Page);
+    expect(await order()).toEqual(['DAYTIME', 'breakfast', 'NIGHT', 'JINGLES']);
+    expect(header('imported')).toHaveAttribute('aria-sort', 'descending');
+  });
+
 });

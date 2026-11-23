@@ -28,6 +28,7 @@
         ['A source pool is a playlist exported from Music or iTunes as XML (File › Library › Export Playlist). Give it a name, like DAYTIME or JINGLES, and import it under ', { b: 'Source pools' }, '.'],
         ['A station asks for its pools by name, so the name must match what the station expects. A pool the station needs but you haven’t imported shows as ', { b: 'not imported' }, ' on the station; click it to import it.'],
         ['Re-import a pool when its playlist changes. ', { b: 'Last imported' }, ' shows when each was last brought in.'],
+        ['Click a column’s heading to sort the list by it: ', { b: 'Last imported' }, ' puts the newest first, and a second click turns it round. The list stays sorted that way next time.'],
       ],
       link: { href: '/sources', label: 'Go to Source pools' },
     },

@@ -22,11 +22,42 @@
   import PoolImportPanel from '$lib/components/sources/PoolImportPanel.svelte';
   import StationServerPanel from '$lib/components/StationServerPanel.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
+  import SortButton from '$lib/components/SortButton.svelte';
+  import {
+    ariaSort,
+    dateValue,
+    nextSort,
+    readSort,
+    sortRows,
+    writeSort,
+    type SortColumns,
+    type SortState,
+  } from '$lib/tableSort';
   import { confirmDialog } from '$lib/confirm';
   import { page } from '$app/stores';
 
   let station: Station | null = null;
   let playlists: PlaylistSummary[] = [];
+
+  // Sorting the generated weeks (plan item 12b): Generated puts the
+  // newest first in one click, to find what was just regenerated. Week
+  // order until then; the choice is remembered for every station.
+  type WeekSortKey = 'week' | 'slots' | 'generated';
+  const weekColumns: SortColumns<PlaylistSummary, WeekSortKey> = {
+    week: { firstDir: 'asc', value: (p) => p.week },
+    slots: { firstDir: 'desc', value: (p) => p.entry_count },
+    generated: { firstDir: 'desc', value: (p) => dateValue(p.generated_at) },
+  };
+  const WEEK_SORT_KEY = 'stationWeeks:sort';
+  let weekSort: SortState<WeekSortKey> = readSort(WEEK_SORT_KEY, weekColumns, {
+    key: 'week',
+    dir: 'asc',
+  });
+  function sortWeeksBy(key: WeekSortKey) {
+    weekSort = nextSort(weekSort, key, weekColumns);
+    writeSort(WEEK_SORT_KEY, weekSort);
+  }
+  $: sortedPlaylists = sortRows(playlists, weekSort, weekColumns, (a, b) => a.week - b.week);
   let error: string | null = null;
   let loading = true;
   // §16.19 — rich overview bundle (template summary / pools / cursors /
@@ -770,9 +801,41 @@
                announce as the user tabs through cells. The
                .visually-hidden utility lives in +layout.svelte. -->
           <tr>
-            <th>Week</th>
-            <th>Slots</th>
-            <th>Generated</th>
+            <th class="num" aria-sort={ariaSort(weekSort, 'week')}>
+              <SortButton
+                label="Week"
+                key="week"
+                sort={weekSort}
+                firstDir={weekColumns.week.firstDir}
+                ascLabel="first week first"
+                descLabel="last week first"
+                numeric
+                on:sort={() => sortWeeksBy('week')}
+              />
+            </th>
+            <th class="num" aria-sort={ariaSort(weekSort, 'slots')}>
+              <SortButton
+                label="Slots"
+                key="slots"
+                sort={weekSort}
+                firstDir={weekColumns.slots.firstDir}
+                ascLabel="fewest first"
+                descLabel="most first"
+                numeric
+                on:sort={() => sortWeeksBy('slots')}
+              />
+            </th>
+            <th aria-sort={ariaSort(weekSort, 'generated')}>
+              <SortButton
+                label="Generated"
+                key="generated"
+                sort={weekSort}
+                firstDir={weekColumns.generated.firstDir}
+                ascLabel="oldest first"
+                descLabel="newest first"
+                on:sort={() => sortWeeksBy('generated')}
+              />
+            </th>
             <th>Trace</th>
             <th><span class="visually-hidden">View</span></th>
             <th><span class="visually-hidden">Regenerate</span></th>
@@ -785,7 +848,7 @@
                rule. The action-column cells (View/Regen/Delete)
                don't carry a label because their buttons already
                read the action; doubling would be noisy. -->
-          {#each playlists as p}
+          {#each sortedPlaylists as p (p.id)}
             <tr>
               <td class="num" data-label="Week">{String(p.week).padStart(3, '0')}</td>
               <td class="num" data-label="Slots">{p.entry_count}</td>
