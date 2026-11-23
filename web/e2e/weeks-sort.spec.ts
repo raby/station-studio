@@ -32,13 +32,14 @@ test.describe('sorting a station’s weeks', () => {
     await page.setViewportSize({ width: 375, height: 800 });
     await page.goto('/stations/weeks-sort-narrow');
     const button = page.getByTestId('sort-week');
+    // The headings are clipped to a 1px box; a clip doesn't shrink the
+    // button's own box, so it's the headings' box that's measured.
+    const headings = page.getByTestId('playlists-table').locator('thead');
+    const width = async () => (await headings.boundingBox())?.width ?? 0;
     await button.waitFor({ state: 'attached' });
-    // Hidden until it has focus: a 1px clip.
-    expect((await button.boundingBox())?.width ?? 0).toBeLessThan(5);
+    expect(await width()).toBeLessThan(5);
     await button.focus();
     await expect(button).toBeFocused();
-    await expect
-      .poll(async () => (await button.boundingBox())?.width ?? 0)
-      .toBeGreaterThan(20);
+    await expect.poll(width).toBeGreaterThan(20);
   });
 });
