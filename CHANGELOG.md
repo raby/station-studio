@@ -6,6 +6,12 @@ this project uses semantic versioning.
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-11-23
+
+Source pools and a station's weeks can be sorted, as a user asked:
+the pool you imported last, or the week you generated last, is one
+click from the top.
+
 ### Added
 
 - Source pools can be sorted by any column: click a heading. Last
