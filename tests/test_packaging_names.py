@@ -48,6 +48,20 @@ def test_the_mac_app_and_its_helper_are_what_the_spec_builds(key):
     assert re.search(r'^HELPER = "([^"]+)"', text, re.M).group(1) == app.mac_helper
 
 
+@pytest.mark.parametrize("key", ["studio", "server"])
+def test_the_windows_setup_hands_links_on(key):
+    """station-…://open (the other apps' Help) must reach the app to show its
+    window: the link registered runs the app with the link, and no flag
+    that keeps the window away. (Station Player registers its own link
+    when it first starts: station_player.desktop.)"""
+    module, _, _, installer, *_ = APPS[key]
+    scheme = __import__(f"{module}.{'desktop' if key == 'studio' else '__main__'}", fromlist=["URL_SCHEME"]).URL_SCHEME
+    line = next(x for x in (ROOT / installer).read_text().splitlines()
+                if rf'Subkey: "Software\Classes\{scheme}\shell\open\command"' in x)
+    value = re.search(r'ValueData: "(.*)"$', line).group(1).replace('""', '"')
+    assert value.endswith(' "%1"') and "--no-window" not in value and "--no-browser" not in value
+
+
 @pytest.mark.parametrize("key", APPS)
 def test_downloads_are_named_as_update_now_looks_for_them(key):
     module, _, _, iss, installers, _ = APPS[key]

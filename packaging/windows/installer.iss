@@ -50,12 +50,14 @@ Name: "{userprograms}\Station Studio"; Filename: "{app}\Station Studio.exe"
 Name: "{userdesktop}\Station Studio"; Filename: "{app}\Station Studio.exe"; Tasks: desktopicon
 
 [Registry]
-; station-studio://start: the installed app's window asks for this when
-; Station Studio isn't running (see desktop.URL_SCHEME). Per user.
+; station-studio: links (desktop.URL_SCHEME), per user. The link is passed
+; on, for Station Studio to tell …://start (the installed app's window
+; asking, with Station Studio not running: no window) from …://open (the
+; other apps' Help: as its icon does).
 Root: HKCU; Subkey: "Software\Classes\station-studio"; ValueType: string; ValueName: ""; ValueData: "URL:Station Studio"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\station-studio"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKCU; Subkey: "Software\Classes\station-studio\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\Station Studio.exe"",0"
-Root: HKCU; Subkey: "Software\Classes\station-studio\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\Station Studio.exe"" --no-browser"
+Root: HKCU; Subkey: "Software\Classes\station-studio\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\Station Studio.exe"" ""%1"""
 ; Start at login (Settings › App) adds itself here; uninstalling takes it away.
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "Station Studio"; Flags: uninsdeletevalue dontcreatekey
 

@@ -48,12 +48,14 @@ Name: "{userprograms}\Station Server"; Filename: "{app}\Station Server.exe"
 Name: "{userdesktop}\Station Server"; Filename: "{app}\Station Server.exe"; Tasks: desktopicon
 
 [Registry]
-; station-server://start: the installed app's window asks for this when
-; Station Server isn't running (see __main__.URL_SCHEME). Per user.
+; station-server: links (__main__.URL_SCHEME), per user. The link is passed
+; on, for Station Server to tell …://start (the installed app's window
+; asking, with it not running: no window) from …://open (the other apps'
+; Help: as its icon does).
 Root: HKCU; Subkey: "Software\Classes\station-server"; ValueType: string; ValueName: ""; ValueData: "URL:Station Server"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\station-server"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKCU; Subkey: "Software\Classes\station-server\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\Station Server.exe"",0"
-Root: HKCU; Subkey: "Software\Classes\station-server\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\Station Server.exe"" app --no-window"
+Root: HKCU; Subkey: "Software\Classes\station-server\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\Station Server.exe"" ""%1"""
 
 [Run]
 Filename: "{app}\Station Server.exe"; Description: "Open Station Server now"; Flags: nowait postinstall skipifsilent

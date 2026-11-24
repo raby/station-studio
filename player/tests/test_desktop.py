@@ -138,7 +138,8 @@ def test_mac_app_is_an_applet_that_takes_open_with_files(tmp_path):
     # station-player://start starts it without a window.
     assert info["CFBundleURLTypes"][0]["CFBundleURLSchemes"] == ["station-player"]
     assert "on open location theURL" in script
-    assert "station_player --app --no-browser >/dev/null" in script.split("on open location")[1]
+    assert "& quoted form of theURL &" in script  # handed on: …://open shows the window
+    assert "--no-browser" not in script.split("on open location")[1]  # the link decides
     assert calls[2][:3] == ["codesign", "--force", "--sign"]
     assert calls[3][0].endswith("lsregister")
     assert not list((tmp_path / "Applications").glob(".*"))  # nothing left behind
@@ -246,12 +247,17 @@ def test_windows_shortcuts_and_run_key(tmp_path):
     assert keys.values[(r"Software\Classes\StationPlayer.AudioFile\shell\open", "FriendlyAppName")] == APP_NAME
     assert keys.values[(r"Software\Classes\.mp3\OpenWithProgids", "StationPlayer.AudioFile")] == ""
     assert not any(k[0] == r"Software\Classes\.mp3" for k in keys.values)
-    # station-player://start starts it without a window.
+    # station-player: links are handed on (…://start without a window,
+    # …://open with it).
     assert keys.values[(r"Software\Classes\station-player", "URL Protocol")] == ""
     assert keys.values[(r"Software\Classes\station-player\shell\open\command", "")].endswith(
-        "pythonw.exe -P -m station_player --app --no-browser")
+        'pythonw.exe -P -m station_player --app "%1"')
     assert d.refresh() is False
     del keys.values[(r"Software\Classes\station-player\shell\open\command", "")]  # made by 0.4.0
+    assert d.refresh() is True and d.refresh() is False
+    # Made before links were handed on: rewritten.
+    keys.values[(r"Software\Classes\station-player\shell\open\command", "")] = (
+        keys.values[(r"Software\Classes\station-player\shell\open\command", "")].replace(' "%1"', " --no-browser"))
     assert d.refresh() is True and d.refresh() is False
 
     d.set_login(True)
@@ -406,8 +412,12 @@ def test_bundled_windows_app_puts_itself_in_open_with(tmp_path, monkeypatch):
                 folders={"programs": tmp_path / "P", "desktop": tmp_path / "D"})
     assert d.refresh() is True  # first start after installing
     assert keys.values[(rf"Software\Classes\{dt.PROG_ID}\shell\open\command", "")] == f'"{exe}" --app "%1"'
-    assert keys.values[(r"Software\Classes\station-player\shell\open\command", "")] == f'"{exe}" --app --no-browser'
+    assert keys.values[(r"Software\Classes\station-player\shell\open\command", "")] == f'"{exe}" --app "%1"'
     assert d.refresh() is False
+    # Updated from a version that registered the link to start with no window.
+    keys.values[(r"Software\Classes\station-player\shell\open\command", "")] = f'"{exe}" --app --no-browser'
+    assert d.refresh() is True
+    assert keys.values[(r"Software\Classes\station-player\shell\open\command", "")] == f'"{exe}" --app "%1"'
     assert not (tmp_path / "P").exists()  # the installer makes the Start menu entry, not the player
     assert make("mac", tmp_path, is_bundled=True).refresh() is False
 
