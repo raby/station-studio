@@ -39,8 +39,9 @@ const HELP = [
   ], { label: "Go to Stations", view: { type: "radio" } }],
   ["tuner", "The tuner", [
     "The dial at the top of the Stations page is an old radio's tuner, with your stations along it, each with its logo and a short line to its spot on the dial. With lots of stations only the logos show; point at one to see its name. Click a station, or drag the needle along the dial and let go near a station; you'll hear static on the way.",
+    "The stations are numbered 1, 2, 3… along the dial, like a car radio's presets: press a number to tune to that station (0 is the tenth). With lots of stations only 1, 5, 10… show, and the one you're tuned to.",
     "With the tuner selected, Left and Right tune to the station before or after. The line moving beside the song title at the bottom follows the sound.",
-    "To choose which stations are on the dial, go to Settings › Radio and tick the ones you want.",
+    "To choose which stations are on the dial, go to Settings › Radio and tick the ones you want. They're numbered in the order of your stations.",
   ]],
   ["globe", "The globe", [
     ["Under Find stations, ", ["Globe"], " shows stations as dots on a world globe. Discover opens on it. Drag to turn it, and scroll or pinch to zoom. Tap a dot to see its name and country, with the station first in the list underneath; tap it again, or its ", ["Listen"], ", to hear it. The stations nearest the middle are listed underneath, with ", ["Add"], " to keep one."],
