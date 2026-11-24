@@ -834,14 +834,20 @@ function drawNight(g, w, h, t, dpr) {
 // smoulders.
 const FIRE_LIVELY = 0.5;
 
+// The glow's brightness at time t (seconds), 1 at its brightest.
+const fireGlow = (t, lively = FIRE_LIVELY) =>
+  1 - 0.15 * lively * (1 - Math.sin(t * 7 * lively) * Math.sin(t * 3.1 * lively));
+
+// Flame i's height at time t, as a share of its full height.
+const flameReach = (t, i, lively = FIRE_LIVELY) =>
+  1 - 0.3 * lively * (1 - Math.sin(t * (4 + i * 0.7) * lively + i * 1.7) * Math.sin(t * 2.3 * lively + i));
+
 // A log fire in the dark.
 function drawFire(g, w, h, t, dpr) {
   g.fillStyle = "#070404";
   g.fillRect(0, 0, w, h);
   const cx = w / 2, base = h * 0.66, s = Math.min(w, h);
-  const L = FIRE_LIVELY;
-  // 1 at its brightest, down by up to 0.3 × L.
-  const flick = 1 - 0.15 * L * (1 - Math.sin(t * 7 * L) * Math.sin(t * 3.1 * L));
+  const flick = fireGlow(t);
   glow(g, cx, base - s * 0.12, s * 0.8 * flick, "255, 110, 30", 0.3);
   // The ground it sits on, lit by it.
   g.fillStyle = "#1a0e08";
@@ -859,9 +865,8 @@ function drawFire(g, w, h, t, dpr) {
     for (let i = 0; i < n; i++) {
       const k = i / (n - 1) - 0.5;
       const x = cx + k * wide * s * 1.6;
-      const jump = Math.sin(t * (4 + i * 0.7) * L + i * 1.7) * Math.sin(t * 2.3 * L + i);
-      const height = s * tall * (1 - Math.abs(k) * 1.1) * (1 - 0.3 * L * (1 - jump));
-      const lean = Math.sin(t * 1.6 * L + i) * s * 0.025 * L;
+      const height = s * tall * (1 - Math.abs(k) * 1.1) * flameReach(t, i);
+      const lean = Math.sin(t * 1.6 * FIRE_LIVELY + i) * s * 0.025 * FIRE_LIVELY;
       const half = wide * s * 0.2;
       const foot = base + half * 0.2;
       g.beginPath();
