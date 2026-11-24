@@ -374,8 +374,10 @@ login*) and the computer awake; if no player window is open, one opens.
 **The tuner** across the top of the Radio page is an old radio's dial
 with your stations along it: click a name, or drag the needle and let
 go near a station (with a hiss of static on the way); Left and Right
-tune to the next one. A line beside the song title moves with the
-sound. Settings › Radio picks which of your stations are on it.
+tune to the next one. The stations are numbered 1, 2, 3… along it,
+like a car radio's presets, and the number keys tune to them (0 is the
+tenth). A line beside the song title moves with the sound. Settings ›
+Radio picks which of your stations are on it, in their order.
 
 **Ambient** in the sidebar fills the screen with a calm scene and its
 own sound, made as it plays: a fish tank, waves on a shore, or birds at

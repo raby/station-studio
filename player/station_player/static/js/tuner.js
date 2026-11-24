@@ -2,8 +2,13 @@
 // An old radio's dial across the top of the Radio page: your stations
 // sit along it, and dragging the needle tunes between them, with a hiss
 // of static on the way. Left and Right (or a click) tune too.
+//
+// The scale numbers the stations 1, 2, 3… like a car radio's presets,
+// and the number keys tune to them (0 is the tenth). It used to read 88
+// to 108, an FM dial's markings, but stations sit evenly along it, not
+// at frequencies (most internet stations have none), so those numbers
+// meant nothing.
 const TUNE = { stations: [], drag: false, noise: null, fit: null };
-const TUNER_MARKS = [88, 90, 92, 94, 96, 98, 100, 102, 104, 106, 108];
 
 function tuner(stations) {
   TUNE.stations = stations;
@@ -14,12 +19,18 @@ function tuner(stations) {
     if (maxWidth) node.style.maxWidth = `${maxWidth}%`;
     return node;
   };
-  const scale = el("div", { class: "tuner-scale" },
-    ...TUNER_MARKS.map((mhz, i) => place(el("span", { class: "tuner-mark" }, String(mhz)), (i / (TUNER_MARKS.length - 1)) * 100)));
   // Names, each with its logo, take turns above and below the scale, so
   // neighbours don't touch, with a short line to their spot on the dial.
   // When names would still touch (syncTunerFit), only the logos show.
   const spot = (i) => ((i + 0.5) / n) * 100;
+  // Each station's number, under its spot. The scale is inset 4% from
+  // each side of the dial, so the spot is moved into its terms. 1, 5,
+  // 10, 15… are "major": when numbers would touch, only those show.
+  const major = (i) => i === 0 || (i + 1) % 5 === 0;
+  const scale = el("div", { class: "tuner-scale" },
+    ...stations.map((st, i) => place(el("span", {
+      class: major(i) ? "tuner-mark major" : "tuner-mark", "data-url": st.url,
+    }, String(i + 1)), ((spot(i) - 4) / 92) * 100)));
   const names = el("div", { class: "tuner-names" },
     ...stations.map((st, i) => place(el("span", { class: i % 2 ? "tuner-line low" : "tuner-line", "data-url": st.url }), spot(i))),
     ...stations.map((st, i) => place(el("button", {
@@ -74,7 +85,24 @@ function syncTunerFit() {
   const crowded = rows.some((row) => row.some((r, i) => i && r.left < row[i - 1].right + 4))
     || [...dial.querySelectorAll(".tuner-label")].some((l) => l.scrollWidth > l.clientWidth + 1);
   dial.classList.toggle("logos-only", crowded);
+  // Numbers too close to read apart: only 1, 5, 10… (and the one tuned).
+  dial.classList.remove("marks-major");
+  const marks = [...dial.querySelectorAll(".tuner-mark")].map((m) => m.getBoundingClientRect());
+  dial.classList.toggle("marks-major", marks.some((r, i) => i && r.left < marks[i - 1].right + 3));
 }
+
+// Presets, as on a car radio: a number key tunes to the station with
+// that number on the dial (0 to the tenth), while the tuner is on
+// screen and nothing's being typed. Ctrl, Alt and Cmd with a number are
+// left for the browser and the computer.
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || !/^[0-9]$/.test(e.key)) return;
+  if (!$("#tuner") || e.target.closest("input, textarea, select, [contenteditable]")) return;
+  const i = e.key === "0" ? 9 : Number(e.key) - 1;
+  if (i >= TUNE.stations.length) return;
+  e.preventDefault();
+  tuneTo(i);
+});
 
 const tunedIndex = () => TUNE.stations.findIndex((st) => S.mode === "radio" && S.station && st.url === S.station.url);
 

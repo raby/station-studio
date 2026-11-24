@@ -793,6 +793,10 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
   position: absolute; top: -3px; transform: translateX(-50%); width: max-content; font-size: 13px; color: var(--muted);
   font-variant-numeric: tabular-nums; letter-spacing: .04em;
 }
+/* The tuned station's number lights with its name; when they're crowded, only 1, 5, 10… */
+.tuner-mark.on { color: var(--accent); font-weight: 600; }
+.tuner-mark.near { color: var(--text); }
+.tuner-dial.marks-major .tuner-mark:not(.major, .on, .near) { visibility: hidden; }
 /* Names take turns above and below the scale, each with a short line to its spot. */
 .tuner-names { position: absolute; inset: 0; pointer-events: none; }
 .tuner-line { position: absolute; top: 36px; height: 12px; width: 1px; margin-left: -.5px; background: var(--faint); }
