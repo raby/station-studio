@@ -13,6 +13,13 @@ async function checkInbox({ fresh = 0 } = {}) {
   }
   await alarmGoesOff(box.alarm, fresh);
   if (ALARM.seq !== null && String(box.ringing) !== String(ALARM.seq)) await alarmEndedElsewhere();
+  // A new version found while the window's open: say so now, as Studio
+  // and Server do, not the next time it opens.
+  if (S.lib && "update" in box && (box.update || null) !== (S.lib.update || null)) {
+    S.lib.update = box.update || null;
+    renderUpdate();
+    if (S.view.type === "settings") syncUpdateSettings();
+  }
   const req = box.open;
   if (!req || String(req.seq) === store("opened-seq")) return;
   if (fresh && req.age > fresh) { store("opened-seq", String(req.seq)); return; }

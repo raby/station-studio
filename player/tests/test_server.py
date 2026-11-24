@@ -727,6 +727,19 @@ def test_new_version_notice_and_its_setting(tmp_path):
     assert ConfigStore().config.check_updates is False
 
 
+def test_an_open_window_hears_of_a_new_version_found_later():
+    # The window reads /api/state when it opens; the hourly check may find
+    # a release days later, so the once-a-second inbox carries it too.
+    from station_player import __version__
+    app = PlayerApp(ConfigStore(), scan=False)
+    assert app.inbox()["update"] is None
+    app.check_for_update(fetch=lambda: "99.0").join(5)
+    assert app.inbox()["update"] == "99.0" == app.state()["update"]
+    app.latest_version = __version__
+    assert app.inbox()["update"] is None
+    assert "update" not in app.inbox(only="station")  # a page starting up asks only for that
+
+
 def test_new_built_in_station_is_added_once(tmp_path):
     rebirth, classics = DEFAULT_STATIONS
     home = tmp_path / "player-home"

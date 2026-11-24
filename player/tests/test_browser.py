@@ -525,6 +525,18 @@ def test_new_version_notice(page, player):
     assert note.is_hidden()  # dismissed for this version
 
 
+def test_a_new_version_found_while_the_window_is_open_shows_without_reopening(page, player):
+    # The hourly check finds a release hours after the window opened: the
+    # sidebar says so within a second or two, as Studio's and Server's do.
+    app = player[0]
+    app.store.config.check_updates = True
+    note = page.locator("#update")
+    sync_api.expect(note).to_be_hidden()
+    app.check_for_update(fetch=lambda: "99.0.0").join(5)
+    sync_api.expect(note).to_contain_text("Station Player 99.0.0 is out", timeout=5000)
+    sync_api.expect(note.get_by_role("button", name="Update now")).to_be_visible()
+
+
 def test_update_from_settings(page, player, monkeypatch):
     import station_player.server as server_mod
     from station_player import updates
