@@ -1731,6 +1731,16 @@ function renderHelp() {
         "The station's page in Station Studio shows whether it's on air here, the song playing, the weeks it has, and warns when it has nothing after this week."),
       h2("Two stations on one computer"),
       p("Add a station for each. They run side by side, each with its own playlist, server, clock and play log, and go on and off air separately: for example Rebirth Classics to port 8000 and Rebirth Radio to port 8002 of the same server, or each to a different server altogether. The sidebar shows each one's state, a microphone while a presenter is live, and headphones on the one you're listening to: Listen plays one station at a time, and Stop listening at the foot of the station list stops it from any page. If both take live shows, each needs its own live shows port, like 8010 and 8020."),
+      h2("The other Station apps"),
+      p("Station Server is one of three apps, each installed on its own."),
+      list(
+        "Station Studio makes the station's playlists, week by week, from your music, and sends them here (Weeks straight from Station Studio, above).",
+        "Station Player plays radio and music. Give it this station's What's on feed (Settings › Website) and it shows what's on now and next."),
+      p("The buttons open them when they're installed on this computer. Which app do I need? on the docs site says what each is for, with the downloads."),
+      el("div", { class: "actions" },
+        el("a", { class: "btn", href: "station-studio://open" }, "Open Station Studio"),
+        el("a", { class: "btn", href: "station-player://open" }, "Open Station Player"),
+        el("a", { class: "btn", href: "https://raby.github.io/station-studio/which-app/", target: "_blank", rel: "noopener" }, "Which app do I need?")),
     ],
     onair: () => [
       el("h2", {}, "The station's page"),

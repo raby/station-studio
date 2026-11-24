@@ -123,6 +123,7 @@ markdown_extensions:
 # `strict: true` happy until each track ships.
 nav:
   - Home: index.md
+  - Which app do I need?: which-app.md
   - Tutorial:
       - tutorial/index.md
   - Reference:

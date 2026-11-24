@@ -9,7 +9,11 @@
     title: string;
     lines: Part[][];
     link?: { href: string; label: string };
+    /** Buttons under it: another app (a station-player: link) or the docs site. */
+    opens?: { href: string; label: string; external?: boolean }[];
   }
+
+  const WHICH_APP = 'https://raby.github.io/station-studio/which-app/';
 
   const TOPICS: Topic[] = [
     {
@@ -74,6 +78,21 @@
       ],
       link: { href: '/settings', label: 'Go to Settings' },
     },
+    {
+      id: 'apps',
+      title: 'The other Station apps',
+      lines: [
+        ['Station Studio is one of three apps, each installed on its own.'],
+        [{ b: 'Station Player' }, ' plays radio and music. A week you export here appears in it by itself, so you can hear it before it goes out.'],
+        [{ b: 'Station Server' }, ' puts a station on air, to a SHOUTcast or Icecast server, playing the weeks Station Studio sends it (see Sending weeks to Station Server above).'],
+        ['The buttons open them when they’re installed on this computer. ', { b: 'Which app do I need?' }, ' on the docs site says what each is for, with the downloads.'],
+      ],
+      opens: [
+        { href: 'station-player://open', label: 'Open Station Player' },
+        { href: 'station-server://open', label: 'Open Station Server' },
+        { href: WHICH_APP, label: 'Which app do I need?', external: true },
+      ],
+    },
   ];
 </script>
 
@@ -105,6 +124,17 @@
       </ul>
       {#if t.link}
         <a class="go" href={t.link.href}>{t.link.label} →</a>
+      {/if}
+      {#if t.opens}
+        <div class="opens">
+          {#each t.opens as o}
+            {#if o.external}
+              <a class="btn" href={o.href} target="_blank" rel="noopener">{o.label}</a>
+            {:else}
+              <a class="btn" href={o.href} data-sveltekit-reload>{o.label}</a>
+            {/if}
+          {/each}
+        </div>
       {/if}
     </section>
   {/each}
@@ -178,5 +208,26 @@
     font-weight: 600;
     margin-top: 6px;
     text-decoration: none;
+  }
+  .opens {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .btn {
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 6px 13px;
+    text-decoration: none;
+  }
+  .btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 </style>

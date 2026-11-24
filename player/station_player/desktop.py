@@ -39,9 +39,19 @@ APP_ID = "io.github.raby.station-player"
 PROG_ID = "StationPlayer.AudioFile"
 # station-player://start starts the player without opening a window: the
 # installed app's window asks for it when it opens with the player off.
+# station-player://open starts it as clicking its icon does, window and all
+# (or shows the window of the copy already running): how the other two
+# apps' Help opens it ("The other Station apps").
 URL_SCHEME = "station-player"
+
+
+def link_opens_window(link: str) -> bool:
+    """Whether a station-player: link asks for the window (…://open)."""
+    rest = link.split(":", 1)[1] if ":" in link else ""
+    return rest.strip("/").split("/")[0].split("?")[0].lower() == "open"
 # Bumped when the Mac app gains something, so existing ones are rebuilt.
-MAC_SHORTCUT_REVISION = 2
+# 3: it hands station-player: links on, for …://open to show the window.
+MAC_SHORTCUT_REVISION = 3
 # What "Open With" offers Station Player for.
 LINUX_MIME_TYPES = ("audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/aac", "audio/flac", "audio/x-flac",
                     "audio/ogg", "audio/opus", "audio/wav", "audio/x-wav", "audio/aiff", "audio/x-aiff",
@@ -225,8 +235,7 @@ class Desktop:
                 return True
             if self.platform != "windows":
                 return changed
-            want = subprocess.list2cmdline(launch_command(False, "windows", self.python)) + ' "%1"'
-            if self._cls().get(rf"Software\Classes\{PROG_ID}\shell\open\command", "") == want:
+            if self._windows_registered():
                 return changed
             self._windows_open_with(True)
             return True
@@ -246,8 +255,7 @@ class Desktop:
             if self._linux_menu_entry().read_text(encoding="utf-8") == self._linux_entry_text(background=False):
                 return False
         else:
-            if self._cls().get(rf"Software\Classes\{PROG_ID}\shell\open\command", "") is not None \
-                    and self._cls().get(rf"Software\Classes\{URL_SCHEME}\shell\open\command", "") is not None:
+            if self._windows_registered():
                 return False
             self._windows_open_with(True)
             return True
@@ -576,7 +584,7 @@ class Desktop:
             f'\tdo shell script "{quoted}" & args & " >/dev/null 2>&1 &"\n'
             "end open\n"
             "on open location theURL\n"
-            f'\tdo shell script "{quoted} --no-browser >/dev/null 2>&1 &"\n'
+            f'\tdo shell script "{quoted} " & quoted form of theURL & " >/dev/null 2>&1 &"\n'
             "end open location\n"
         )
         return self._mac_compile(bundle, script, {
@@ -705,19 +713,29 @@ class Desktop:
             for ext in WINDOWS_EXTENSIONS:
                 reg.delete(rf"Software\Classes\{ext}\OpenWithProgids", PROG_ID)
             return
-        cmd = launch_command(False, "windows", self.python)
         reg.set(base, "", "Audio file")
         reg.set(base + r"\DefaultIcon", "", str(ICON_DIR / "icon.ico"))
         reg.set(base + r"\shell\open", "FriendlyAppName", APP_NAME)
-        reg.set(base + r"\shell\open\command", "", subprocess.list2cmdline(cmd) + ' "%1"')
+        reg.set(base + r"\shell\open\command", "", self._windows_command())
         for ext in WINDOWS_EXTENSIONS:
             reg.set(rf"Software\Classes\{ext}\OpenWithProgids", PROG_ID, "")
-        # station-player://start, without a window (see URL_SCHEME).
+        # station-player: links, handed on for the player to tell …://start
+        # (no window) from …://open (see URL_SCHEME).
         reg.set(scheme, "", f"URL:{APP_NAME}")
         reg.set(scheme, "URL Protocol", "")
         reg.set(scheme, "StationPlayer", "1")
         reg.set(scheme + r"\DefaultIcon", "", str(ICON_DIR / "icon.ico"))
-        reg.set(scheme + r"\shell\open\command", "", subprocess.list2cmdline(launch_command(True, "windows", self.python)))
+        reg.set(scheme + r"\shell\open\command", "", self._windows_command())
+
+    def _windows_command(self) -> str:
+        """What Open With and station-player: links run: the file or link last."""
+        return subprocess.list2cmdline(launch_command(False, "windows", self.python)) + ' "%1"'
+
+    def _windows_registered(self) -> bool:
+        """Open With and the link both there, running this copy as it runs now."""
+        want = self._windows_command()
+        return all(self._cls().get(rf"Software\Classes\{key}\shell\open\command", "") == want
+                   for key in (PROG_ID, URL_SCHEME))
 
 
 class _UserKeys:

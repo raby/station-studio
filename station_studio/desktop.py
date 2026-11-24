@@ -43,6 +43,9 @@ DEFAULT_PORT = 8001
 # Studio wasn't running, see web/static/offline.js) is already open. The
 # Mac app registers it in its Info.plist, the Windows setup in the
 # registry (packaging/).
+# station-studio://open starts it as clicking its icon does, window and all
+# (or shows the window of the copy already running): how the other two
+# apps' Help opens it ("The other Station apps").
 URL_SCHEME = "station-studio"
 # Sent with every request that changes something, so another website open
 # in the browser can't (browsers won't send a custom header cross-site
@@ -418,6 +421,12 @@ def serve(port: int, show: bool) -> int:
     return 0
 
 
+def link_opens_window(link: str) -> bool:
+    """Whether a station-studio: link asks for the window (…://open)."""
+    rest = link.split(":", 1)[1] if ":" in link else ""
+    return rest.strip("/").split("/")[0].split("?")[0].lower() == "open"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="station-studio app",
@@ -430,8 +439,11 @@ def main(argv: list[str] | None = None) -> int:
         argv = sys.argv[1:]
     # Older macOS hands the app a process id.
     argv = [a for a in argv if not a.startswith("-psn_")]
-    if any(a.lower().startswith(f"{URL_SCHEME}:") for a in argv):
-        argv = [a for a in argv if not a.lower().startswith(f"{URL_SCHEME}:")] + ["--no-browser"]
+    links = [a for a in argv if a.lower().startswith(f"{URL_SCHEME}:")]
+    if links:
+        argv = [a for a in argv if a not in links]
+        if not all(link_opens_window(a) for a in links):
+            argv.append("--no-browser")
     args = parser.parse_args(argv)
 
     if selfupdate.bundled():

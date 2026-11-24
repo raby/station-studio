@@ -40,6 +40,8 @@ Two more apps live alongside it, each released on its own:
 
 <div class="grid cards" markdown>
 
+- :material-help-circle: **[Which app do I need?](which-app.md)** —
+  Station Player, Studio or Server: what each is for
 - :material-rocket-launch: **[Tutorial](tutorial/index.md)** —
   your first station in 10 minutes
 - :material-book-open-variant: **[Reference](reference/index.md)** —

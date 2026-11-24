@@ -220,6 +220,21 @@ def test_station_studio_link_starts_it_without_a_window(monkeypatch):
     assert calls == [(desktop.DEFAULT_PORT, False), (8126, False)]
 
 
+def test_station_studio_open_link_starts_it_with_its_window(monkeypatch):
+    # Station Player's and Server's Help open Station Studio with
+    # station-studio://open: as clicking its icon, window and all.
+    calls = []
+    monkeypatch.setattr(desktop, "running_instance", lambda base: None)
+    monkeypatch.setattr(desktop, "port_free", lambda port: True)
+    monkeypatch.setattr(desktop, "serve", lambda port, show: calls.append((port, show)) or 0)
+    assert desktop.main(["station-studio://open"]) == 0
+    assert desktop.main(["STATION-STUDIO://open/"]) == 0
+    assert calls == [(desktop.DEFAULT_PORT, True), (desktop.DEFAULT_PORT, True)]
+    assert desktop.link_opens_window("station-studio:open")
+    assert not desktop.link_opens_window("station-studio://start")
+    assert not desktop.link_opens_window("station-studio://opener")
+
+
 def test_port_taken_by_something_else(monkeypatch, capsys):
     monkeypatch.setattr(desktop, "running_instance", lambda base: None)
     monkeypatch.setattr(desktop, "port_free", lambda port: False)

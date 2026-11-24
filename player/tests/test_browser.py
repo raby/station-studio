@@ -1998,6 +1998,14 @@ def test_help_page(page):
     sync_api.expect(page.locator("#view h1")).to_have_text("Help")
     page.locator(".help-toc .chip", has_text="Tagging stations").click()
     sync_api.expect(page.locator("#help-tags h2")).to_be_focused()
+    # The other two apps: open them (their station-…://open links), and
+    # the docs site's "Which app do I need?" in the browser.
+    apps = page.locator("#help-apps")
+    sync_api.expect(apps.get_by_role("link", name="Open Station Studio")).to_have_attribute("href", "station-studio://open")
+    sync_api.expect(apps.get_by_role("link", name="Open Station Server")).to_have_attribute("href", "station-server://open")
+    docs = apps.get_by_role("link", name="Which app do I need?")
+    sync_api.expect(docs).to_have_attribute("href", "https://raby.github.io/station-studio/which-app/")
+    sync_api.expect(docs).to_have_attribute("target", "_blank")
     page.locator("#help-radio").get_by_role("button", name="Go to Stations").click()
     sync_api.expect(page.locator("#view h1")).to_have_text("Radio")
 

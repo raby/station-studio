@@ -96,6 +96,16 @@ const HELP = [
     ["For people who make a radio station, ", ["Settings › App"], " has ", ["Show the studio tools"], ": playlists exported from station-studio or iTunes, recording radio, the Recordings page and the play log. With them off, Station Player is a simple radio and music player; turning them off keeps your recordings and playlists."],
     "A new install starts with them on only when station-studio is on the same computer.",
   ]],
+  ["apps", "The other Station apps", [
+    "Station Player is one of three apps, each installed on its own. You don't need the others to listen.",
+    [["Station Studio"], " makes a radio station's playlists, week by week, from your music. Its weeks appear here by themselves."],
+    [["Station Server"], " puts a station on air, to a SHOUTcast or Icecast server, and tells Station Player what's on now and next on it."],
+    ["The buttons open them when they're installed on this computer. ", ["Which app do I need?"], " on the docs site says what each is for, with the downloads."],
+  ], [
+    { label: "Open Station Studio", href: "station-studio://open", app: true },
+    { label: "Open Station Server", href: "station-server://open", app: true },
+    { label: "Which app do I need?", href: "https://raby.github.io/station-studio/which-app/" },
+  ]],
   ["install", "Installing it on another computer", [
     ["On a Mac: download ", ["Station Player for Mac"], " from the download page, open it and drag Station Player into Applications. The first time you open it, macOS says it can't check it for malicious software, because it comes from a person rather than the App Store: open ", ["System Settings › Privacy & Security"], ", scroll down and press ", ["Open Anyway"], ". You only do this once."],
     ["On Windows: download ", ["Station Player for Windows"], " and run it. If Windows says it protected your PC, press ", ["More info"], " then ", ["Run anyway"], ". It installs for you alone, with no administrator password, and puts Station Player in the Start menu."],
@@ -108,6 +118,14 @@ const HELP = [
     ["Updates: when a new version is out, the sidebar says so. Press ", ["Update now"], " and Station Player downloads it, installs it and restarts, keeping your stations and settings. Settings › App has ", ["Check for updates"], " too."],
   ]],
 ];
+
+// A topic's button: a page of the app, a website (in the browser), or
+// another of the Station apps (its station-…://open link, in place).
+function helpGo(go) {
+  if (go.app) return el("a", { class: "btn", href: go.href }, go.label);
+  if (go.href) return el("a", { class: "btn", href: go.href, target: "_blank", rel: "noopener" }, go.label);
+  return el("button", { type: "button", class: "btn", onclick: () => show(go.view) }, go.label);
+}
 
 function helpText(part) {
   // A paragraph is a string, or a list of text and [names of buttons],
@@ -132,7 +150,6 @@ function helpView() {
     shown.map(([id, title, parts, go]) => el("section", { class: "help-section", id: `help-${id}` },
       el("h2", { tabindex: "-1" }, title),
       parts.map((p) => el("p", {}, ...helpText(p))),
-      go && go.href ? el("a", { class: "btn", href: go.href, target: "_blank", rel: "noopener" }, go.label)
-        : go ? el("button", { type: "button", class: "btn", onclick: () => show(go.view) }, go.label) : null)),
+      Array.isArray(go) ? el("div", { class: "help-actions" }, go.map(helpGo)) : go ? helpGo(go) : null)),
     el("p", { class: "help-version" }, `Station Player ${S.lib && S.lib.version ? S.lib.version : ""}`));
 }
