@@ -253,6 +253,7 @@ def test_tuner_tunes_between_stations_and_the_wave_moves(page, player, tone_stat
     sync_api.expect(box_).to_have_value("1")
     assert page.evaluate("S.station.name") == "Two FM"
     box_.fill("")
+    tuner.scroll_into_view_if_needed()  # the box is further down the page
     # Dragging the needle hisses between stations, and lets go on the nearest.
     box = tuner.bounding_box()
     y = box["y"] + box["height"] * 0.5  # on the scale, between the names
