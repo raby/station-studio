@@ -327,6 +327,37 @@ def test_ambient_mode(page):
     page.locator("#btn-ambient-close").click()
 
 
+def test_the_fire_smoulders_rather_than_flickers(page):
+    """Plan item 9 (F4): half the speed and half the swing of the first fire,
+    which is still there at FIRE_LIVELY = 1."""
+    got = page.evaluate("""() => {
+      const glow = [], reach = [], first = [], firstReach = [];
+      // The first fire's own sums, as they were written before.
+      const before = (t) => 0.85 + 0.15 * Math.sin(t * 7) * Math.sin(t * 3.1);
+      const beforeReach = (t, i) => 0.7 + 0.3 * Math.sin(t * (4 + i * 0.7) + i * 1.7) * Math.sin(t * 2.3 + i);
+      let same = true, dips = 0, firstDips = 0, prev = 1, prevFirst = 1, falling = false, fallingFirst = false;
+      for (let t = 0; t < 60; t += 0.005) {
+        const g = fireGlow(t), g1 = fireGlow(t, 1);
+        glow.push(g); first.push(g1);
+        for (let i = 0; i < 9; i++) { reach.push(flameReach(t, i)); firstReach.push(flameReach(t, i, 1)); }
+        same = same && Math.abs(g1 - before(t)) < 1e-9 && Math.abs(flameReach(t, 4, 1) - beforeReach(t, 4)) < 1e-9;
+        // Count the glow's dips: a fall that turns into a rise.
+        if (g > prev) { if (falling) dips++; falling = false; } else if (g < prev) falling = true;
+        if (g1 > prevFirst) { if (fallingFirst) firstDips++; fallingFirst = false; } else if (g1 < prevFirst) fallingFirst = true;
+        prev = g; prevFirst = g1;
+      }
+      return { lively: FIRE_LIVELY, glow: [Math.min(...glow), Math.max(...glow)], reach: [Math.min(...reach), Math.max(...reach)],
+               first: [Math.min(...first), Math.max(...first)], firstReach: [Math.min(...firstReach), Math.max(...firstReach)],
+               same, dips, firstDips };
+    }""")
+    assert got["lively"] == 0.5
+    assert got["same"]  # at 1, exactly the first fire
+    assert got["first"][0] == pytest.approx(0.70, abs=0.01) and got["firstReach"][0] == pytest.approx(0.40, abs=0.01)
+    assert got["glow"][0] == pytest.approx(0.85, abs=0.01) and got["glow"][1] <= 1
+    assert got["reach"][0] == pytest.approx(0.70, abs=0.01) and got["reach"][1] <= 1
+    assert got["dips"] == pytest.approx(got["firstDips"] / 2, rel=0.15)  # half as often
+
+
 def test_ambient_plays_a_recording_when_there_is_one(page, tmp_path):
     # A recording for Rain, as the app would ship it in static/ambient/.
     rec = tone(tmp_path / "rain.wav", 2.0, 0.3, 300).read_bytes()
