@@ -247,6 +247,14 @@ def test_tuner_tunes_between_stations_and_the_wave_moves(page, player, tone_stat
     page.keyboard.press("Control+1")  # left for the browser
     page.wait_for_timeout(300)
     assert page.evaluate("S.station.name") == "Two FM"
+    # Not while Ambient fills the screen over the dial.
+    page.locator("#btn-ambient").click()
+    sync_api.expect(page.locator("#ambient")).to_be_visible()
+    page.keyboard.press("1")
+    page.wait_for_timeout(300)
+    assert page.evaluate("S.station.name") == "Two FM"
+    page.keyboard.press("Escape")
+    sync_api.expect(page.locator("#ambient")).to_be_hidden()
     # Typing a number in a box types it, and tunes nothing.
     box_ = page.get_by_placeholder("Station name")
     box_.press("1")

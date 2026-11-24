@@ -93,11 +93,14 @@ function syncTunerFit() {
 
 // Presets, as on a car radio: a number key tunes to the station with
 // that number on the dial (0 to the tenth), while the tuner is on
-// screen and nothing's being typed. Ctrl, Alt and Cmd with a number are
-// left for the browser and the computer.
+// screen and nothing's being typed. Not while Ambient or the alarm
+// fills the screen over it: the dial can't be seen then. Ctrl, Alt and
+// Cmd with a number are left for the browser and the computer; Shift
+// isn't, since some keyboards (French AZERTY) need it for the numbers.
 document.addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || !/^[0-9]$/.test(e.key)) return;
   if (!$("#tuner") || e.target.closest("input, textarea, select, [contenteditable]")) return;
+  if (document.querySelector('[aria-modal="true"]:not([hidden])')) return;
   const i = e.key === "0" ? 9 : Number(e.key) - 1;
   if (i >= TUNE.stations.length) return;
   e.preventDefault();
