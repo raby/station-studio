@@ -30,6 +30,9 @@ PASSWORD_ENV = "STATION_SERVER_PASSWORD"
 # the window asking (the installed app opened from the Dock while Station
 # Server wasn't running, see static/offline.js) is already open. The Mac
 # app registers it in its Info.plist, the Windows setup in the registry.
+# station-server://open starts it as clicking its icon does, window and all
+# (or shows the window of the copy already running): how the other two
+# apps' Help opens it ("The other Station apps").
 URL_SCHEME = "station-server"
 UPDATE_CHECK_EVERY = 60 * 60  # looks hourly; GitHub is asked at most daily
 
@@ -316,12 +319,20 @@ def _app(args) -> int:
     return 0
 
 
+def _link_opens_window(link: str) -> bool:
+    """Whether a station-server: link asks for the window (…://open)."""
+    rest = link.split(":", 1)[1] if ":" in link else ""
+    return rest.strip("/").split("/")[0].split("?")[0].lower() == "open"
+
+
 def _from_link(argv: list[str]) -> list[str]:
     """Opened through a station-server: link (or by an older macOS, with a
-    process id): start in the background, with no window."""
+    process id): station-server://open starts the app as its icon does;
+    any other (…://start) in the background, with no window."""
     argv = [a for a in argv if not a.startswith("-psn_")]
-    if any(a.lower().startswith(f"{URL_SCHEME}:") for a in argv):
-        argv = ["app", "--no-window"]
+    links = [a for a in argv if a.lower().startswith(f"{URL_SCHEME}:")]
+    if links:
+        argv = ["app"] if all(_link_opens_window(a) for a in links) else ["app", "--no-window"]
     return argv
 
 

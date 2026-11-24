@@ -320,6 +320,28 @@ def test_station_player_link_starts_without_a_window(monkeypatch):
     assert shown == []  # the page that asked is the window
 
 
+def test_station_player_open_link_shows_the_window(monkeypatch):
+    # Studio's and Server's Help open Station Player with station-player://open:
+    # as clicking its icon, the copy running shows its window.
+    shown = []
+    monkeypatch.setattr(cli, "_running_instance", lambda url: True)
+    monkeypatch.setattr(cli, "_outdated_instance", lambda url: False)
+    monkeypatch.setattr(cli, "_send_sources", lambda url, sources: None)
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: shown.append(url))
+    for link in ("station-player://open", "STATION-PLAYER://open/", "station-player:open"):
+        assert cli.main([link]) == 0
+    assert len(shown) == 3
+
+
+def test_which_station_player_links_ask_for_the_window():
+    from station_player.desktop import link_opens_window
+    assert link_opens_window("station-player://open")
+    assert link_opens_window("station-player://Open/?from=studio")
+    assert not link_opens_window("station-player://start")
+    assert not link_opens_window("station-player://")
+    assert not link_opens_window("station-player://opener")
+
+
 def test_bundled_app_always_runs_as_an_app(monkeypatch):
     seen = []
     monkeypatch.setattr(cli, "bundled", lambda: True)

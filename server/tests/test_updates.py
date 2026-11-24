@@ -158,8 +158,19 @@ def test_update_now_reports_progress(call, monkeypatch):
 
 def test_a_station_server_link_starts_it_in_the_background():
     assert cli._from_link(["station-server://start"]) == ["app", "--no-window"]
+    # …://open (Station Player's and Studio's Help) as its icon does: window and all.
+    assert cli._from_link(["station-server://open"]) == ["app"]
+    assert cli._from_link(["STATION-SERVER://open/"]) == ["app"]
+    assert cli._from_link(["station-server://opener"]) == ["app", "--no-window"]
     assert cli._from_link(["-psn_0_12345"]) == []
     assert cli._from_link(["play", "x.xml", "--to", "a.mp3"]) == ["play", "x.xml", "--to", "a.mp3"]
+
+
+def test_help_opens_the_other_two_apps():
+    # Help › Getting started › The other Station apps: their …://open links.
+    app_js = (STATIC_DIR / "app.js").read_bytes()
+    assert b'href: "station-studio://open"' in app_js and b'href: "station-player://open"' in app_js
+    assert b"https://raby.github.io/station-studio/which-app/" in app_js
 
 
 def test_the_update_watch_keeps_going_after_an_error():

@@ -39,7 +39,16 @@ APP_ID = "io.github.raby.station-player"
 PROG_ID = "StationPlayer.AudioFile"
 # station-player://start starts the player without opening a window: the
 # installed app's window asks for it when it opens with the player off.
+# station-player://open starts it as clicking its icon does, window and all
+# (or shows the window of the copy already running): how the other two
+# apps' Help opens it ("The other Station apps").
 URL_SCHEME = "station-player"
+
+
+def link_opens_window(link: str) -> bool:
+    """Whether a station-player: link asks for the window (…://open)."""
+    rest = link.split(":", 1)[1] if ":" in link else ""
+    return rest.strip("/").split("/")[0].split("?")[0].lower() == "open"
 # Bumped when the Mac app gains something, so existing ones are rebuilt.
 MAC_SHORTCUT_REVISION = 2
 # What "Open With" offers Station Player for.

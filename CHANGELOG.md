@@ -6,6 +6,16 @@ this project uses semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Help has **The other Station apps**: what Station Player and Station
+  Server are for, buttons that open them when they're installed on
+  the same computer, and a link to the docs site's new **Which app do
+  I need?** page. Station Player's and Station Server's Help have the
+  same. A `station-studio://open` link opens Station Studio as its
+  icon does (`station-studio://start` still starts it without a
+  window).
+
 ## [1.22.0] - 2026-11-23
 
 Source pools and a station's weeks can be sorted, as a user asked:

@@ -16,7 +16,7 @@ from pathlib import Path
 from station_player import __version__, updates
 from station_player.config import ConfigStore, get_home
 from station_player.window import mac_app_bundle, open_ui
-from station_player.desktop import URL_SCHEME, Desktop, app_executable, bundled
+from station_player.desktop import URL_SCHEME, Desktop, app_executable, bundled, link_opens_window
 from station_player.httperrors import closing_errors
 from station_player.library import AUDIO_EXTENSIONS
 from station_player.server import API_HEADER, PlayerApp, make_server
@@ -285,10 +285,14 @@ def main(argv: list[str] | None = None) -> int:
         argv = sys.argv[1:]
     # The Mac app may be handed a process id by older macOS, and a
     # station-player: link (the offline page's Start button) asks for the
-    # player to start without a window of its own.
+    # player to start without a window of its own; station-player://open
+    # (Studio's or Server's Help) starts it as its icon does.
     argv = [a for a in argv if not a.startswith("-psn_")]
-    if any(a.lower().startswith(f"{URL_SCHEME}:") for a in argv):
-        argv = [a for a in argv if not a.lower().startswith(f"{URL_SCHEME}:")] + ["--no-browser"]
+    links = [a for a in argv if a.lower().startswith(f"{URL_SCHEME}:")]
+    if links:
+        argv = [a for a in argv if a not in links]
+        if not all(link_opens_window(a) for a in links):
+            argv.append("--no-browser")
     args = parser.parse_args(argv)
     if bundled():
         args.app = True  # the downloaded app has no terminal: log to a file, reuse a running copy
