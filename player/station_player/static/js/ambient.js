@@ -773,7 +773,8 @@ function drawNight(g, w, h, t, dpr) {
   g.fillRect(0, 0, w, h);
   if (!AMB.things.length) {
     for (let i = 0; i < 220; i++) {
-      AMB.things.push({ kind: "star", x: rand(0, w), y: rand(0, h * 0.7), r: rand(0.4, 1.4) * dpr, speed: rand(0.5, 2.5), phase: rand(0, 6) });
+      // Twinkling at half the pace they first did (0.5 to 2.5), the fire's calming.
+      AMB.things.push({ kind: "star", x: rand(0, w), y: rand(0, h * 0.7), r: rand(0.4, 1.4) * dpr, speed: rand(0.25, 1.25), phase: rand(0, 6) });
     }
     for (let i = 0; i < 22; i++) {
       AMB.things.push({ kind: "fly", x: rand(0, w), y: rand(h * 0.6, h * 0.95), ax: rand(20, 70) * dpr, ay: rand(10, 30) * dpr,
@@ -782,7 +783,8 @@ function drawNight(g, w, h, t, dpr) {
   }
   for (const s of AMB.things) {
     if (s.kind !== "star") continue;
-    g.fillStyle = `rgba(255, 255, 240, ${0.35 + 0.65 * Math.abs(Math.sin(t * s.speed + s.phase))})`;
+    // Between 67.5% and full: half the swing of the first (35% to full).
+    g.fillStyle = `rgba(255, 255, 240, ${0.675 + 0.325 * Math.abs(Math.sin(t * s.speed + s.phase))})`;
     g.fillRect(s.x, s.y, s.r * 2, s.r * 2);
   }
   const mr = Math.min(w, h) * 0.05;
@@ -824,12 +826,28 @@ function drawNight(g, w, h, t, dpr) {
   }
 }
 
+// How lively the fire is, in speed and swing alike. At 1 it's the fire
+// as it first was: the glow pulsing between 70% and 100% about once a
+// second, each flame jumping between 40% and 100% of its height up to
+// twice a second, which people found flickered too much. At 0.5 it
+// moves at half the speed, between 85% and 100% and 70% and 100%, so it
+// smoulders.
+const FIRE_LIVELY = 0.5;
+
+// The glow's brightness at time t (seconds), 1 at its brightest.
+const fireGlow = (t, lively = FIRE_LIVELY) =>
+  1 - 0.15 * lively * (1 - Math.sin(t * 7 * lively) * Math.sin(t * 3.1 * lively));
+
+// Flame i's height at time t, as a share of its full height.
+const flameReach = (t, i, lively = FIRE_LIVELY) =>
+  1 - 0.3 * lively * (1 - Math.sin(t * (4 + i * 0.7) * lively + i * 1.7) * Math.sin(t * 2.3 * lively + i));
+
 // A log fire in the dark.
 function drawFire(g, w, h, t, dpr) {
   g.fillStyle = "#070404";
   g.fillRect(0, 0, w, h);
   const cx = w / 2, base = h * 0.66, s = Math.min(w, h);
-  const flick = 0.85 + 0.15 * Math.sin(t * 7) * Math.sin(t * 3.1);
+  const flick = fireGlow(t);
   glow(g, cx, base - s * 0.12, s * 0.8 * flick, "255, 110, 30", 0.3);
   // The ground it sits on, lit by it.
   g.fillStyle = "#1a0e08";
@@ -847,8 +865,8 @@ function drawFire(g, w, h, t, dpr) {
     for (let i = 0; i < n; i++) {
       const k = i / (n - 1) - 0.5;
       const x = cx + k * wide * s * 1.6;
-      const height = s * tall * (1 - Math.abs(k) * 1.1) * (0.7 + 0.3 * Math.sin(t * (4 + i * 0.7) + i * 1.7) * Math.sin(t * 2.3 + i));
-      const lean = Math.sin(t * 1.6 + i) * s * 0.025;
+      const height = s * tall * (1 - Math.abs(k) * 1.1) * flameReach(t, i);
+      const lean = Math.sin(t * 1.6 * FIRE_LIVELY + i) * s * 0.025 * FIRE_LIVELY;
       const half = wide * s * 0.2;
       const foot = base + half * 0.2;
       g.beginPath();
