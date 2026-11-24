@@ -324,9 +324,7 @@ class PlayerApp:
             "window_browser": self.window_browser,
             "mac_app": self.mac_app,
             "remote": self.remote_info(),
-            "update": self.latest_version
-            if (config["check_updates"] or self.checked_by_hand) and updates.is_newer(self.latest_version, __version__)
-            else None,
+            "update": self.update_offered(config["check_updates"]),
             "updating": self.updater.status() if self.updater else None,
             "sources": _source_summaries(lib, config),
             "missing": lib.missing_count(),
@@ -485,7 +483,18 @@ class PlayerApp:
         # Which alarm is ringing now (its seq), so a window showing one
         # notices when it was snoozed or stopped elsewhere, or timed out.
         out["ringing"] = (self.alarm_state()["ringing"] or {}).get("seq")
+        # A new version found by the hourly check while the window is open:
+        # the window only read /api/state when it opened (or when something
+        # changed), so it would only have said so the next time it opened.
+        out["update"] = self.update_offered(self.store.config.check_updates)
         return out
+
+    def update_offered(self, check_updates: bool) -> str | None:
+        """The newer version to offer, if there is one and looking is on
+        (or someone looked by hand)."""
+        if (check_updates or self.checked_by_hand) and updates.is_newer(self.latest_version, __version__):
+            return self.latest_version
+        return None
 
     def start_station(self, url: str, hold: bool = False) -> None:
         """Have the page play a saved station (a desktop icon for it was
