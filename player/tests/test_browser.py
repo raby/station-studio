@@ -230,6 +230,38 @@ def test_tuner_tunes_between_stations_and_the_wave_moves(page, player, tone_stat
     sync_api.expect(tuner).to_have_attribute("aria-valuetext", "Three FM")
     page.keyboard.press("Home")
     page.wait_for_function("() => S.station.name === 'One FM'")
+    # The scale numbers the stations, each under its own spot, and the
+    # number keys tune to them like a car radio's presets.
+    marks = page.locator("#tuner .tuner-mark")
+    sync_api.expect(marks).to_have_text(["1", "2", "3"])
+    for mark, line in zip(marks.all(), page.locator("#tuner .tuner-line").all()):
+        m, ln = mark.bounding_box(), line.bounding_box()
+        assert abs((m["x"] + m["width"] / 2) - (ln["x"] + ln["width"] / 2)) < 3
+    page.keyboard.press("3")
+    page.wait_for_function("() => S.station.name === 'Three FM'")
+    sync_api.expect(marks.nth(2)).to_have_class(re.compile(r"\bon\b"))
+    page.locator(".nav-item[data-view=radio]").focus()  # from anywhere on the page, not just the dial
+    page.keyboard.press("2")
+    page.wait_for_function("() => S.station.name === 'Two FM'")
+    page.keyboard.press("7")  # no seventh station: nothing changes
+    page.keyboard.press("Control+1")  # left for the browser
+    page.wait_for_timeout(300)
+    assert page.evaluate("S.station.name") == "Two FM"
+    # Not while Ambient fills the screen over the dial.
+    page.locator("#btn-ambient").click()
+    sync_api.expect(page.locator("#ambient")).to_be_visible()
+    page.keyboard.press("1")
+    page.wait_for_timeout(300)
+    assert page.evaluate("S.station.name") == "Two FM"
+    page.keyboard.press("Escape")
+    sync_api.expect(page.locator("#ambient")).to_be_hidden()
+    # Typing a number in a box types it, and tunes nothing.
+    box_ = page.get_by_placeholder("Station name")
+    box_.press("1")
+    sync_api.expect(box_).to_have_value("1")
+    assert page.evaluate("S.station.name") == "Two FM"
+    box_.fill("")
+    tuner.scroll_into_view_if_needed()  # the box is further down the page
     # Dragging the needle hisses between stations, and lets go on the nearest.
     box = tuner.bounding_box()
     y = box["y"] + box["height"] * 0.5  # on the scale, between the names

@@ -289,7 +289,7 @@ function tunerSettings() {
     el("h2", {}, "On the tuner"),
     el("p", { class: "help" },
       "The dial across the top of the Radio page. Tick the stations you want on it; the rest still have their cards below it. ",
-      "They sit in the order of your stations: change it with Up and Down when you edit a station. The tuner shows once two or more are ticked."),
+      "They sit in the order of your stations, numbered 1, 2, 3… like a car radio's presets: press a number to tune to one. Change the order with Up and Down when you edit a station. The tuner shows once two or more are ticked."),
     stations.length
       ? el("div", { class: "checks tuner-checks" }, stations.map((st, i) => checkbox(`tuner-${i}`, st.name, onTuner(st), change(st))))
       : el("p", { class: "help" }, "Add stations on the Radio page first."));
