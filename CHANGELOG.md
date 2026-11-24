@@ -6,6 +6,13 @@ this project uses semantic versioning.
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-11-24
+
+Station Studio, Station Player and Station Server now say what the
+other two are for, and open each other. Released with Station Player
+0.25.0 and Station Server 0.24.0, which need to go out together for
+their Open buttons to work.
+
 ### Added
 
 - Help has **The other Station apps**: what Station Player and Station
