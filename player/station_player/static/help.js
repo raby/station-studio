@@ -106,6 +106,10 @@ const HELP = [
     { label: "Open Station Server", href: "station-server://open", app: true },
     { label: "Which app do I need?", href: "https://raby.github.io/station-studio/which-app/" },
   ]],
+  ["report", "Report a problem", [
+    "Something not working, or not as it should? Report it on GitHub, where Station Player is made. The button opens a new report with this copy's version and your computer already filled in: say what happened, what you expected, and how to make it happen again.",
+    "You'll need a free GitHub account. If something went wrong, the log file helps: have a look before you attach it, as it lists the names of files and folders Station Player has used.",
+  ], () => reportActions()],
   ["install", "Installing it on another computer", [
     ["On a Mac: download ", ["Station Player for Mac"], " from the download page, open it and drag Station Player into Applications. The first time you open it, macOS says it can't check it for malicious software, because it comes from a person rather than the App Store: open ", ["System Settings › Privacy & Security"], ", scroll down and press ", ["Open Anyway"], ". You only do this once."],
     ["On Windows: download ", ["Station Player for Windows"], " and run it. If Windows says it protected your PC, press ", ["More info"], " then ", ["Run anyway"], ". It installs for you alone, with no administrator password, and puts Station Player in the Start menu."],
@@ -118,6 +122,20 @@ const HELP = [
     ["Updates: when a new version is out, the sidebar says so. Press ", ["Update now"], " and Station Player downloads it, installs it and restarts, keeping your stations and settings. Settings › App has ", ["Check for updates"], " too."],
   ]],
 ];
+
+// Help › Report a problem: the new issue (this copy's details filled in),
+// where the log file is, and what the report will say about this copy.
+function reportActions() {
+  const r = S.lib && S.lib.report;
+  if (!r) return null;
+  return el("div", { class: "help-report" },
+    el("div", { class: "help-actions" },
+      el("a", { class: "btn primary", href: r.issue_url, target: "_blank", rel: "noopener" }, "Report a problem")),
+    r.log_file
+      ? el("p", {}, "The log file: ", el("code", { class: "help-path", "data-testid": "log-file" }, r.log_file))
+      : el("p", {}, "This copy writes its log in the terminal it was started from: copy what it says there."),
+    el("p", { class: "muted" }, `The report says: ${r.app} ${r.version}, ${r.installed}, on ${r.system}, Python ${r.python}.`));
+}
 
 // A topic's button: a page of the app, a website (in the browser), or
 // another of the Station apps (its station-…://open link, in place).
@@ -150,6 +168,7 @@ function helpView() {
     shown.map(([id, title, parts, go]) => el("section", { class: "help-section", id: `help-${id}` },
       el("h2", { tabindex: "-1" }, title),
       parts.map((p) => el("p", {}, ...helpText(p))),
-      Array.isArray(go) ? el("div", { class: "help-actions" }, go.map(helpGo)) : go ? helpGo(go) : null)),
+      typeof go === "function" ? go()
+        : Array.isArray(go) ? el("div", { class: "help-actions" }, go.map(helpGo)) : go ? helpGo(go) : null)),
     el("p", { class: "help-version" }, `Station Player ${S.lib && S.lib.version ? S.lib.version : ""}`));
 }

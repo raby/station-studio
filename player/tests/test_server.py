@@ -727,6 +727,14 @@ def test_new_version_notice_and_its_setting(tmp_path):
     assert ConfigStore().config.check_updates is False
 
 
+def test_state_says_what_a_problem_report_needs():
+    from station_player import __version__
+    got = PlayerApp(ConfigStore(), scan=False).state()["report"]
+    assert got["app"] == "Station Player" and got["version"] == __version__
+    assert got["installed"] == "installed with pip"  # not the downloaded app
+    assert got["issue_url"].startswith("https://github.com/raby/station-studio/issues/new?")
+
+
 def test_an_open_window_hears_of_a_new_version_found_later():
     # The window reads /api/state when it opens; the hourly check may find
     # a release days later, so the once-a-second inbox carries it too.

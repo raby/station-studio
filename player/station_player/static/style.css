@@ -772,6 +772,8 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
 .help-section p { margin: 0 0 8px; line-height: 1.55; }
 .help-section .btn { margin-top: 4px; }
 .help-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.help-path { overflow-wrap: anywhere; user-select: all; }
+.help-report .muted { color: var(--muted); }
 .help-version { color: var(--faint); font-size: 13px; }
 
 /* The tuner: an old radio's dial with your stations along it. */

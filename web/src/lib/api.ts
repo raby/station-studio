@@ -714,6 +714,21 @@ export interface Meta {
 export const getMeta = (fetch_ = fetch): Promise<Meta> =>
   fetch_('/api/meta').then((r) => json<Meta>(r));
 
+/** Help › Report a problem (station_appkit.report). `log_file` is null
+ *  when Studio logs to the terminal it was started from. */
+export interface ProblemReport {
+  app: string;
+  version: string;
+  installed: string;
+  system: string;
+  python: string;
+  log_file: string | null;
+  issue_url: string;
+}
+
+export const getReport = (fetch_ = fetch): Promise<ProblemReport> =>
+  fetch_('/api/report').then((r) => json<ProblemReport>(r));
+
 
 // ---- §14.29 + §14.30 per-station rule CRUD ----------------------------
 

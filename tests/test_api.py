@@ -2989,6 +2989,19 @@ def test_meta_returns_all_four_lists_sorted(api):
         assert value == sorted(value), f"{key} list is not sorted: {value}"
 
 
+def test_report_fills_in_this_copy_for_a_new_issue(api):
+    """Help › Report a problem (station_appkit.report)."""
+    from station_studio import __version__
+    client, _ = api
+    r = client.get("/api/report")
+    assert r.status_code == 200
+    got = r.json()
+    assert got["app"] == "Station Studio" and got["version"] == __version__
+    assert got["installed"] == "installed with pip"  # not the downloaded app
+    assert got["issue_url"].startswith("https://github.com/raby/station-studio/issues/new?")
+    assert f"Station+Studio+{__version__}" in got["issue_url"]
+
+
 def test_meta_matches_engine_constants(api):
     """The endpoint's lists must match what engine/template.py validates.
 

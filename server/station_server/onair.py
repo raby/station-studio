@@ -21,6 +21,7 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from station_appkit import report as problem_report
 from station_player.library import AUDIO_EXTENSIONS, Track
 from station_player.logos import LogoStore
 from station_player.playlog import PlayLog
@@ -995,6 +996,8 @@ class ServerApp:
         kind = self.updater.kind if self.updater else selfupdate.install_kind()
         return {
             "version": __version__,
+            # Help › Report a problem: the issue link and the log file.
+            "report": problem_report.details("Station Server", __version__, kind),
             "update": latest,
             "updating": self.updater.status() if self.updater else None,
             "can_update": kind in ("mac", "windows"),

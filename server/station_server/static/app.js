@@ -1699,6 +1699,23 @@ function renderHelp() {
   const p = (...t) => el("p", { class: "help" }, ...t);
   const h2 = (t) => el("h2", { class: "spaced" }, t);
   const list = (...items) => el("ul", { class: "help steps" }, items.map((i) => el("li", {}, i)));
+  // Getting started › Report a problem: a new GitHub issue with this
+  // copy's version and computer filled in, and where the log file is.
+  const reportHelp = () => {
+    const r = S.state && S.state.report;
+    if (!r) return [];
+    return [
+      h2("Report a problem"),
+      p("Something not working, or not as it should? Report it on GitHub, where Station Server is made. The button opens a new report with this copy's version and your computer already filled in: say what happened, what you expected, and how to make it happen again. You'll need a free GitHub account."),
+      r.log_file
+        ? p("If something went wrong, the log file helps: have a look before you attach it, as it lists the names of files and folders Station Server has used. It's ",
+            el("code", { class: "log-path", "data-testid": "log-file" }, r.log_file), ".")
+        : p("This copy writes its log in the terminal it was started from: copy what it says there."),
+      p(`The report says: ${r.app} ${r.version}, ${r.installed}, on ${r.system}, Python ${r.python}.`),
+      el("div", { class: "actions" },
+        el("a", { class: "btn primary", href: r.issue_url, target: "_blank", rel: "noopener" }, "Report a problem")),
+    ];
+  };
   const pages = {
     start: () => [
       el("h2", {}, "What it does"),
@@ -1741,6 +1758,7 @@ function renderHelp() {
         el("a", { class: "btn", href: "station-studio://open" }, "Open Station Studio"),
         el("a", { class: "btn", href: "station-player://open" }, "Open Station Player"),
         el("a", { class: "btn", href: "https://raby.github.io/station-studio/which-app/", target: "_blank", rel: "noopener" }, "Which app do I need?")),
+      ...reportHelp(),
     ],
     onair: () => [
       el("h2", {}, "The station's page"),

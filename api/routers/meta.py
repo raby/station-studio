@@ -13,6 +13,8 @@ frontend-only convention until §11's scheduler v1.1 lands).
 from __future__ import annotations
 
 from fastapi import APIRouter
+from station_appkit import report as problem_report
+from station_appkit.selfupdate import install_kind
 
 from engine.template import (
     SUPPORTED_ROLES,
@@ -39,3 +41,12 @@ def get_meta() -> MetaResponse:
         roles=sorted(SUPPORTED_ROLES),
         cadences=sorted(SUGGESTED_CADENCES),
     )
+
+
+@router.get("/api/report")
+def get_report() -> dict:
+    """Help › Report a problem: a new GitHub issue with this copy's version
+    and computer filled in, and the log file (None when it logs to the
+    terminal it was started from). See station_appkit.report."""
+    from station_studio import __version__
+    return problem_report.details("Station Studio", __version__, install_kind())
