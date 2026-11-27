@@ -8,6 +8,8 @@ CONTRIBUTING, "Releasing").
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-27
+
 ### Added
 
 - When a new version is out, What's new under the notice says what it

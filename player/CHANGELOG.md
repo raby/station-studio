@@ -7,6 +7,8 @@ needs its section before it can go out (see CONTRIBUTING, "Releasing").
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-27
+
 ### Added
 
 - When a new version is out, What's new under the notice says what it

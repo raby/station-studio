@@ -6,6 +6,13 @@ this project uses semantic versioning.
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-11-27
+
+Every release now says what it changes: on GitHub, and from the next
+release on, under What's new in the update notice. Released with
+Station Player 0.27.0, Station Server 0.26.0 and station-appkit 1.3.0,
+which all three need.
+
 ### Added
 
 - Each release's notes on GitHub start with what it changes, taken
