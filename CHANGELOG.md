@@ -6,6 +6,15 @@ this project uses semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Help › **Report a problem**: a button that opens a new GitHub issue
+  with this copy's version, how it was installed and your computer
+  already filled in, and where Station Studio's log file is (or that
+  it logs to the terminal it was started from). Station Player's Help
+  and Station Server's Help › Getting started have the same.
+  station-appkit 1.2.0 holds the shared part.
+
 ## [1.23.0] - 2026-11-24
 
 Station Studio, Station Player and Station Server now say what the

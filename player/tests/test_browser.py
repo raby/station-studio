@@ -2018,6 +2018,15 @@ def test_help_page(page):
     docs = apps.get_by_role("link", name="Which app do I need?")
     sync_api.expect(docs).to_have_attribute("href", "https://raby.github.io/station-studio/which-app/")
     sync_api.expect(docs).to_have_attribute("target", "_blank")
+    # Report a problem: a new issue with this copy's version filled in.
+    report = page.locator("#help-report").get_by_role("link", name="Report a problem")
+    href = report.get_attribute("href")
+    assert href.startswith("https://github.com/raby/station-studio/issues/new?")
+    from urllib.parse import parse_qs, urlsplit
+    from station_player import __version__
+    assert f"Station Player {__version__}" in parse_qs(urlsplit(href).query)["body"][0]
+    sync_api.expect(report).to_have_attribute("target", "_blank")
+    sync_api.expect(page.locator("#help-report")).to_contain_text(f"The report says: Station Player {__version__}")
     page.locator("#help-radio").get_by_role("button", name="Go to Stations").click()
     sync_api.expect(page.locator("#view h1")).to_have_text("Radio")
 

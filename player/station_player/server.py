@@ -33,6 +33,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urljoin, urlparse
 
 from station_player import __version__, loudness, myplaylists, pagescript, picks, qr, radio, remote, selfupdate, setup, updates
+from station_appkit import report as problem_report
+from station_appkit.selfupdate import install_kind
+
 from station_player.config import MAX_RECENT, clean_alarm, clean_alarms, clean_tags
 from station_player.directory import Directory, DirectoryError
 from station_player.httperrors import closing_errors
@@ -326,6 +329,8 @@ class PlayerApp:
             "remote": self.remote_info(),
             "update": self.update_offered(config["check_updates"]),
             "updating": self.updater.status() if self.updater else None,
+            # Help › Report a problem: the issue link and the log file.
+            "report": problem_report.details("Station Player", __version__, install_kind()),
             "sources": _source_summaries(lib, config),
             "missing": lib.missing_count(),
             "next_alarm": self.next_alarm(),

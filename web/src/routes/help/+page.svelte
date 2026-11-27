@@ -1,4 +1,15 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { getReport, type ProblemReport } from '$lib/api';
+
+  // Help › Report a problem: this copy's details, from /api/report.
+  let report: ProblemReport | null = null;
+  onMount(() => {
+    getReport()
+      .then((r) => (report = r))
+      .catch(() => {}); // the topic still says where to report, without the link
+  });
+
   /**
    * The Help page: a short guide to Station Studio for someone using it
    * for the first time, in the style of Station Player's Help.
@@ -93,6 +104,14 @@
         { href: WHICH_APP, label: 'Which app do I need?', external: true },
       ],
     },
+    {
+      id: 'report',
+      title: 'Report a problem',
+      lines: [
+        ['Something not working, or not as it should? Report it on GitHub, where Station Studio is made. The button opens a new report with this copy’s version and your computer already filled in: say what happened, what you expected, and how to make it happen again.'],
+        ['You’ll need a free GitHub account. If something went wrong, the log file helps: have a look before you attach it, as it lists the names of files and folders Station Studio has used.'],
+      ],
+    },
   ];
 </script>
 
@@ -124,6 +143,33 @@
       </ul>
       {#if t.link}
         <a class="go" href={t.link.href}>{t.link.label} →</a>
+      {/if}
+      {#if t.id === 'report'}
+        {#if report}
+          <p>
+            {#if report.log_file}
+              The log file: <code class="path" data-testid="log-file">{report.log_file}</code>
+            {:else if report.in_docker}
+              This copy runs in Docker, so its log is the container’s:
+              <code class="path">docker compose logs station-studio</code> shows it.
+            {:else}
+              This copy writes its log in the terminal it was started from: copy what it says there.
+            {/if}
+          </p>
+          <p class="muted">
+            The report says: {report.app} {report.version}, {report.installed}, on {report.system}, Python
+            {report.python}.
+          </p>
+          <div class="opens">
+            <a class="btn" href={report.issue_url} target="_blank" rel="noopener">Report a problem</a>
+          </div>
+        {:else}
+          <div class="opens">
+            <a class="btn" href="https://github.com/raby/station-studio/issues/new" target="_blank" rel="noopener"
+              >Report a problem</a
+            >
+          </div>
+        {/if}
       {/if}
       {#if t.opens}
         <div class="opens">
@@ -208,6 +254,13 @@
     font-weight: 600;
     margin-top: 6px;
     text-decoration: none;
+  }
+  .path {
+    overflow-wrap: anywhere;
+    user-select: all;
+  }
+  .muted {
+    color: var(--muted);
   }
   .opens {
     display: flex;

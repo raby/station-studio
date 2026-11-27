@@ -1649,7 +1649,7 @@ wheels = [
 
 [[package]]
 name = "station-appkit"
-version = "1.1.2"
+version = "1.2.0"
 source = { editable = "appkit" }
 
 [package.dev-dependencies]

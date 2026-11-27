@@ -75,6 +75,20 @@ def test_no_notice_for_this_version_or_older(tmp_path):
     assert app.state()["update"] is None
 
 
+def test_state_says_what_a_problem_report_needs(tmp_path, monkeypatch):
+    from station_appkit import report
+    monkeypatch.setattr(report, "in_docker", lambda: False)  # as on a computer, not a container
+    got = make_app(tmp_path).state()["report"]
+    assert got["app"] == "Station Server" and got["version"] == __version__
+    assert got["installed"] == "installed with pip"
+    assert got["issue_url"].startswith("https://github.com/raby/station-studio/issues/new?")
+
+
+def test_help_offers_a_problem_report():
+    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    assert 'h2("Report a problem")' in app_js and "...reportHelp()" in app_js
+
+
 @pytest.fixture
 def call(tmp_path, monkeypatch):
     app = make_app(tmp_path)
