@@ -82,6 +82,8 @@ jobs:
             echo "ERROR: release server-v$VERSION already exists. Bump the version first (or, for a draft left by a failed run, re-run that run's failed jobs)." >&2
             exit 1
           fi
+          # A new release needs its changelog section: say so now, not after the tests.
+          python3 scripts/release_notes.py server/CHANGELOG.md "$VERSION" "Station Server" > /dev/null
           echo "exists=false" >> "$GITHUB_OUTPUT"
 
       - name: get ffmpeg

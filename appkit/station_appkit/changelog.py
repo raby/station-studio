@@ -104,9 +104,35 @@ def find(text: str, version: str) -> Release | None:
     return next((r for r in parse(text) if r.version == version), None)
 
 
+def _unwrap(lines: list[str]) -> list[str]:
+    """Markdown with each paragraph and bullet on one line: GitHub shows a
+    release's notes with every line break kept, so a changelog's wrapped
+    lines would break mid-sentence there. Headings, blank lines and code
+    blocks stay as they are."""
+    out: list[str] = []
+    joinable = False  # the last line out is text a wrapped line continues
+    fenced = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            fenced = not fenced
+            out.append(line)
+            joinable = False
+        elif fenced or not stripped or stripped.startswith("#") or _LINK_DEF.match(stripped):
+            out.append(line)
+            joinable = False
+        elif stripped.startswith(("- ", "* ")) or not joinable:
+            out.append(line.rstrip())
+            joinable = True
+        else:
+            out[-1] += " " + stripped
+    return out
+
+
 def section(text: str, version: str) -> str | None:
-    """A release's part of the changelog as written (markdown), without
-    its heading: for its notes on GitHub. None when it has none."""
+    """A release's part of the changelog (markdown), without its heading,
+    each paragraph and bullet on one line: for its notes on GitHub. None
+    when it has none."""
     lines = text.splitlines()
     start = next((i for i, line in enumerate(lines)
                   if (m := _RELEASE.match(line.rstrip())) and m["version"] == version), None)
@@ -114,7 +140,7 @@ def section(text: str, version: str) -> str | None:
         return None
     end = next((i for i in range(start + 1, len(lines))
                 if lines[i].startswith("## ") or lines[i].startswith("# ")), len(lines))
-    body = "\n".join(line for line in lines[start + 1:end] if not _LINK_DEF.match(line)).strip()
+    body = "\n".join(_unwrap([line for line in lines[start + 1:end] if not _LINK_DEF.match(line)])).strip()
     return body or None
 
 

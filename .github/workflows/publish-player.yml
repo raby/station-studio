@@ -80,6 +80,8 @@ jobs:
             echo "ERROR: release player-v$VERSION already exists. Bump player/pyproject.toml's version first." >&2
             exit 1
           fi
+          # A new release needs its changelog section: say so now, not after the tests.
+          python3 scripts/release_notes.py player/CHANGELOG.md "$VERSION" "Station Player" > /dev/null
           echo "exists=false" >> "$GITHUB_OUTPUT"
 
       - name: tests
