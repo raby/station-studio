@@ -110,14 +110,16 @@ def fetch_latest_with_notes(app: App, opener=urlopen) -> tuple[str | None, dict[
     return newest_release(releases, app.tag_prefix), release_notes(releases, app.tag_prefix)
 
 
-# The cache's notes, read again only when the file changes: Player's page
-# asks once a second while a new version is on offer.
-_notes_read: dict[Path, tuple[int, dict]] = {}
+# The cache's notes, read again only when the file changes (written here,
+# or its time or size changed): Player's page asks once a second while a
+# new version is on offer.
+_notes_read: dict[Path, tuple[tuple[int, int], dict]] = {}
 
 
 def _cached_notes(cache: Path) -> dict:
     try:
-        changed = cache.stat().st_mtime_ns
+        stat = cache.stat()
+        changed = (stat.st_mtime_ns, stat.st_size)  # Windows' clock may not tick between writes
         seen = _notes_read.get(cache)
         if seen and seen[0] == changed:
             return seen[1]
@@ -180,6 +182,7 @@ def latest_version(app: App, cache: Path, fetch=None, now: float | None = None, 
         if notes is not None:
             record["notes"] = notes
         cache.write_text(json.dumps(record), encoding="utf-8")
+        _notes_read.pop(cache, None)
     except OSError:
         pass
     return latest
