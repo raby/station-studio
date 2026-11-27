@@ -999,6 +999,8 @@ class ServerApp:
             # Help › Report a problem: the issue link and the log file.
             "report": problem_report.details("Station Server", __version__, kind),
             "update": latest,
+            # What the releases since this one change (Update now's What's new).
+            "update_notes": updates.notes_since(self.store.home / "update-check.json", latest),
             "updating": self.updater.status() if self.updater else None,
             "can_update": kind in ("mac", "windows"),
             "release_page": selfupdate.release_page(latest) if latest else None,

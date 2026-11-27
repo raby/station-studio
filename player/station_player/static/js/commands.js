@@ -17,6 +17,7 @@ async function checkInbox({ fresh = 0 } = {}) {
   // and Server do, not the next time it opens.
   if (S.lib && "update" in box && (box.update || null) !== (S.lib.update || null)) {
     S.lib.update = box.update || null;
+    S.lib.update_notes = box.update_notes || [];
     renderUpdate();
     if (S.view.type === "settings") syncUpdateSettings();
   }

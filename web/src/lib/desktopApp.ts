@@ -14,6 +14,14 @@ export interface UpdateStatus {
   page: string;
 }
 
+/** A release's "What's new", from its notes on GitHub (plain text). */
+export interface ReleaseNotes {
+  version: string;
+  date: string | null;
+  intro: string[];
+  groups: { heading: string | null; items: string[] }[];
+}
+
 export interface AppState {
   service: 'station-studio';
   app: true;
@@ -21,6 +29,9 @@ export interface AppState {
   kind: 'mac' | 'windows' | null;
   can_update: boolean;
   latest: string | null;
+  /** What the releases after this one, up to `latest`, change, newest
+   *  first (station_appkit.updates.notes_since); empty when unknown. */
+  latest_notes?: ReleaseNotes[];
   release_page: string | null;
   update: UpdateStatus | null;
   home: string;

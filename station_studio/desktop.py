@@ -255,6 +255,8 @@ class DesktopState:
             "kind": self.kind,
             "can_update": self.kind in ("mac", "windows"),
             "latest": newer,
+            # What the releases since this one change (Update now's What's new).
+            "latest_notes": updates.notes_since(self.cache, newer),
             "release_page": selfupdate.release_page(newer) if newer else None,
             "update": self.updater.status(),
             "home": str(self.home),

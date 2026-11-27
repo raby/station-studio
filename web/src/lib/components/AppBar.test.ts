@@ -68,6 +68,24 @@ describe('AppBar', () => {
     expect(notice.querySelector('a')).toHaveAttribute('href', expect.stringContaining('studio-v1.7.0'));
   });
 
+  it('shows what the new version changes, folded under What\u2019s new', async () => {
+    const latest_notes = [
+      { version: '1.8.0', date: '2026-12-01', intro: [], groups: [{ heading: 'Fixed', items: ['A fix.'] }] },
+      { version: '1.7.0', date: '2026-11-30', intro: ['Sorting.'], groups: [{ heading: 'Added', items: ['Sort by any column.', 'Newest first.'] }] },
+    ];
+    const fetchFn = vi.fn(async () =>
+      json(appState({ latest: '1.8.0', latest_notes, release_page: 'https://github.com/raby/station-studio/releases/tag/studio-v1.8.0' })),
+    );
+    const { findByTestId } = render(AppBar, { props: { fetchFn } });
+    const notes = await findByTestId('app-update-notes');
+    expect(notes.tagName).toBe('DETAILS');
+    expect(notes.querySelector('summary')).toHaveTextContent("What's new");
+    expect([...notes.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['A fix.', 'Sort by any column.', 'Newest first.']);
+    expect(notes).toHaveTextContent('1.8.0'); // more than one release: each says which
+    expect(notes).toHaveTextContent('Sorting.');
+    expect((await findByTestId('app-update-notice')).querySelector('a')).toBeNull(); // the notes, not the link
+  });
+
   it('Not now hides the notice for that version, and a newer one shows again', async () => {
     localStorage.clear();
     let latest = '1.7.0';

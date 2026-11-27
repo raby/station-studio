@@ -1,7 +1,9 @@
 """The new-version notice: asks GitHub, at most once a day, for an app's
 newest release (`studio-v*`, `player-v*` or `server-v*`: the releases
-that carry its Mac and Windows downloads). Only release names are
-fetched; nothing is sent but the request itself.
+that carry its Mac and Windows downloads), and keeps what each recent one
+says it changes (the "What's new" at the top of its notes), for Update
+now to show. One request, the same one as ever: nothing is sent but the
+request itself.
 """
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ import urllib.request
 from pathlib import Path
 
 from station_appkit import App
+from station_appkit.changelog import whats_new
 
 
 def urlopen(*args, **kwargs):
@@ -63,12 +66,64 @@ def newest_release(releases, tag_prefix: str) -> str | None:
     return best
 
 
-def fetch_latest(app: App, opener=urlopen) -> str | None:
-    """The app's newest release, from GitHub."""
+# How many recent releases' "What's new" the cache keeps: enough for a
+# copy a few releases behind.
+NOTES_KEPT = 10
+
+
+def release_notes(releases, tag_prefix: str) -> dict[str, dict]:
+    """Each recent published release's "What's new", by version (plain text;
+    see station_appkit.changelog). Releases from before notes said what they
+    changed have none, and are left out."""
+    found: list[tuple[str, dict]] = []
+    for release in releases if isinstance(releases, list) else []:
+        if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
+            continue
+        tag = release.get("tag_name")
+        if not isinstance(tag, str) or not tag.startswith(tag_prefix) or not parse_version(tag[len(tag_prefix):]):
+            continue
+        notes = whats_new(release.get("body"))
+        if notes is not None:
+            notes.version = tag[len(tag_prefix):]
+            published = release.get("published_at")
+            notes.date = published[:10] if isinstance(published, str) and published else None
+            found.append((notes.version, notes.as_dict()))
+    found.sort(key=lambda pair: parse_version(pair[0]), reverse=True)
+    return dict(found[:NOTES_KEPT])
+
+
+def _releases(app: App, opener=urlopen):
     req = urllib.request.Request(app.releases_api, headers={"Accept": "application/vnd.github+json",
                                                             "User-Agent": app.slug})
     with opener(req, timeout=_TIMEOUT) as resp:
-        return newest_release(json.loads(resp.read(5_000_000)), app.tag_prefix)
+        return json.loads(resp.read(5_000_000))
+
+
+def fetch_latest(app: App, opener=urlopen) -> str | None:
+    """The app's newest release, from GitHub."""
+    return newest_release(_releases(app, opener), app.tag_prefix)
+
+
+def fetch_latest_with_notes(app: App, opener=urlopen) -> tuple[str | None, dict[str, dict]]:
+    """The app's newest release, and what recent ones changed: one request."""
+    releases = _releases(app, opener)
+    return newest_release(releases, app.tag_prefix), release_notes(releases, app.tag_prefix)
+
+
+def notes_since(cache: Path, current: str, latest: str | None) -> list[dict]:
+    """What the releases after `current`, up to `latest`, say they change,
+    newest first, from the cache latest_version keeps. Empty when there's
+    no newer version, or GitHub's notes didn't say (older releases)."""
+    if not is_newer(latest, current):
+        return []
+    try:
+        notes = json.loads(cache.read_text(encoding="utf-8")).get("notes")
+    except (OSError, ValueError, AttributeError):
+        return []
+    if not isinstance(notes, dict):
+        return []
+    return [notes[v] for v in sorted(notes, key=lambda v: parse_version(v) or (), reverse=True)
+            if isinstance(notes[v], dict) and is_newer(v, current) and not is_newer(v, latest)]
 
 
 def latest_version(app: App, cache: Path, fetch=None, now: float | None = None, force: bool = False,
@@ -82,7 +137,7 @@ def latest_version(app: App, cache: Path, fetch=None, now: float | None = None, 
     check asked for by hand can say it couldn't, rather than that all is up
     to date."""
     now = time.time() if now is None else now
-    fetch = fetch or (lambda: fetch_latest(app))
+    fetch = fetch or (lambda: fetch_latest_with_notes(app))
     cached: dict = {}
     try:
         cached = json.loads(cache.read_text(encoding="utf-8"))
@@ -95,16 +150,22 @@ def latest_version(app: App, cache: Path, fetch=None, now: float | None = None, 
     if not force and isinstance(checked, (int, float)) and 0 <= now - checked < CHECK_EVERY:
         return known
     try:
-        latest = fetch()
+        latest = fetch()  # a version, or (version, notes) from fetch_latest_with_notes
     except Exception as exc:  # offline, proxy, GitHub down: try again next time
         logger.info("Couldn't check for a new version of %s: %s", app.name, exc)
         if not quiet:
             raise
         return known
+    notes = None
+    if isinstance(latest, tuple):
+        latest, notes = latest
     logger.info("Newest %s release: %s", app.name, latest)
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps({"checked": now, "latest": latest}), encoding="utf-8")
+        record = {"checked": now, "latest": latest}
+        if notes is not None:
+            record["notes"] = notes
+        cache.write_text(json.dumps(record), encoding="utf-8")
     except OSError:
         pass
     return latest

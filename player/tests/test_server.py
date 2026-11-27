@@ -727,6 +727,19 @@ def test_new_version_notice_and_its_setting(tmp_path):
     assert ConfigStore().config.check_updates is False
 
 
+def test_update_now_says_what_the_new_version_changes():
+    import json
+    store = ConfigStore()
+    app = PlayerApp(store, scan=False)
+    store.home.mkdir(parents=True, exist_ok=True)
+    (store.home / "update-check.json").write_text(json.dumps({"checked": 0, "latest": "99.0.0", "notes": {"99.0.0": {"version": "99.0.0", "date": None, "intro": [], "groups": [{"heading": "Added", "items": ["Something new."]}]}}}))
+    assert app.state()["update_notes"] == [] and "update_notes" not in app.inbox()  # none offered yet
+    app.latest_version = "99.0.0"
+    notes = app.state()["update_notes"]
+    assert [r["version"] for r in notes] == ["99.0.0"] and notes[0]["groups"][0]["items"] == ["Something new."]
+    assert app.inbox()["update_notes"] == notes  # an open window hears of them with the version
+
+
 def test_state_says_what_a_problem_report_needs(monkeypatch):
     from station_appkit import report
     from station_player import __version__

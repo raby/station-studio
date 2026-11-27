@@ -113,3 +113,54 @@ def test_a_release_check_github_refuses_lets_the_error_go_closed():
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def _notes(version: str, *items: str) -> str:
+    """A release's notes on GitHub, as scripts/release_notes.py starts them."""
+    bullets = "\n".join(f"- {i}" for i in items)
+    return (f"## What's new in Station Test {version}\n\n### Fixed\n\n{bullets}\n\n---\n"
+            f"Station Test {version}: **Download** below.\n\n- **Mac:** not a change\n")
+
+
+RELEASES = [
+    {"tag_name": "test-v1.3.0", "body": _notes("1.3.0", "Third."), "published_at": "2026-12-03T10:00:00Z"},
+    {"tag_name": "test-v1.2.0", "body": _notes("1.2.0", "Second, **bold**."), "published_at": "2026-12-02T10:00:00Z"},
+    {"tag_name": "test-v1.1.0", "body": "Station Test 1.1.0: from before notes said what changed."},
+    {"tag_name": "test-v1.4.0", "body": _notes("1.4.0", "A draft."), "draft": True},
+    {"tag_name": "server-v9.0.0", "body": _notes("9.0.0", "Another app's.")},
+]
+
+
+def test_one_request_brings_the_newest_and_what_recent_ones_change(app):
+    asked = []
+
+    def opener(req, timeout):
+        asked.append(req.full_url)
+        return io.BytesIO(json.dumps(RELEASES).encode())
+
+    latest, notes = updates.fetch_latest_with_notes(app, opener)
+    assert latest == "1.3.0" and len(asked) == 1
+    assert list(notes) == ["1.3.0", "1.2.0"]  # published, this app's, and saying what changed
+    assert notes["1.2.0"] == {"version": "1.2.0", "date": "2026-12-02", "intro": [],
+                              "groups": [{"heading": "Fixed", "items": ["Second, bold."]}]}
+
+
+def test_update_now_reads_what_changed_since_this_version(app, tmp_path):
+    cache = tmp_path / "update-check.json"
+    latest = updates.latest_version(app, cache, fetch=lambda: ("1.3.0", updates.release_notes(RELEASES, "test-v")),
+                                    now=1000.0)
+    assert latest == "1.3.0"
+    assert [r["version"] for r in updates.notes_since(cache, "1.1.0", latest)] == ["1.3.0", "1.2.0"]
+    assert [r["version"] for r in updates.notes_since(cache, "1.2.0", latest)] == ["1.3.0"]
+    assert updates.notes_since(cache, "1.3.0", latest) == []  # up to date
+    assert updates.notes_since(cache, "1.1.0", "1.2.0")[0]["version"] == "1.2.0"  # never past the newest offered
+    # A check by hand that only got a version keeps no notes; nothing breaks.
+    updates.latest_version(app, cache, fetch=lambda: "1.3.0", now=1000.0, force=True)
+    assert updates.notes_since(cache, "1.1.0", "1.3.0") == []
+    assert updates.notes_since(tmp_path / "missing.json", "1.1.0", "1.3.0") == []
+
+
+def test_only_the_last_few_releases_notes_are_kept():
+    many = [{"tag_name": f"test-v1.{i}.0", "body": _notes(f"1.{i}.0", "x")} for i in range(25)]
+    kept = updates.release_notes(many, "test-v")
+    assert len(kept) == updates.NOTES_KEPT and next(iter(kept)) == "1.24.0"

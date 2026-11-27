@@ -6,6 +6,19 @@ GitHub, and what Update now says about a new version all come from
 here, so a release needs its section before it can go out (see
 CONTRIBUTING, "Releasing").
 
+## [Unreleased]
+
+### Added
+
+- When a new version is out, What's new under the notice says what it
+  changes (and what any versions in between changed), from its release
+  notes.
+
+### Changed
+
+- Help › What's new is kept up to date: it's built from Station
+  Server's changelog, which each release now adds to.
+
 ## [0.25.0] - 2026-11-27
 
 ### Added
