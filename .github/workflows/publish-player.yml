@@ -80,6 +80,8 @@ jobs:
             echo "ERROR: release player-v$VERSION already exists. Bump player/pyproject.toml's version first." >&2
             exit 1
           fi
+          # A new release needs its changelog section: say so now, not after the tests.
+          python3 scripts/release_notes.py player/CHANGELOG.md "$VERSION" "Station Player" > /dev/null
           echo "exists=false" >> "$GITHUB_OUTPUT"
 
       - name: tests
@@ -128,7 +130,11 @@ jobs:
         run: |
           VERSION=${{ steps.version.outputs.version }}
           WHEEL=$(basename dist/station_player-*.whl)
-          cat > notes.md <<NOTES
+          # What's new, from player/CHANGELOG.md (stops here, before anything
+          # is published, if it has no section for this version), then how
+          # to get it. Update now shows the What's new part.
+          python3 scripts/release_notes.py player/CHANGELOG.md "$VERSION" "Station Player" > notes.md
+          cat >> notes.md <<NOTES
           Station Player $VERSION: plays station-studio's exported playlists, local music folders and internet radio.
 
           **Download** (no terminal needed; the files are below, under Assets):

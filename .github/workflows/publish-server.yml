@@ -82,6 +82,8 @@ jobs:
             echo "ERROR: release server-v$VERSION already exists. Bump the version first (or, for a draft left by a failed run, re-run that run's failed jobs)." >&2
             exit 1
           fi
+          # A new release needs its changelog section: say so now, not after the tests.
+          python3 scripts/release_notes.py server/CHANGELOG.md "$VERSION" "Station Server" > /dev/null
           echo "exists=false" >> "$GITHUB_OUTPUT"
 
       - name: get ffmpeg
@@ -136,7 +138,11 @@ jobs:
         if: steps.version.outputs.exists != 'true'
         run: |
           VERSION=${{ steps.version.outputs.version }}
-          cat > notes.md <<NOTES
+          # What's new, from server/CHANGELOG.md (stops here, before anything
+          # is published, if it has no section for this version), then how
+          # to get it. Update now shows the What's new part.
+          python3 scripts/release_notes.py server/CHANGELOG.md "$VERSION" "Station Server" > notes.md
+          cat >> notes.md <<NOTES
           Station Server $VERSION: puts station-studio's weekly playlists on air to SHOUTcast or Icecast, with no iTunes, loopback cable or Winamp.
 
           **Download** (the files are below, under Assets):

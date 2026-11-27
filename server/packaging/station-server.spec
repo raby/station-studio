@@ -26,7 +26,9 @@ a = Analysis(
     [str(HERE / "launcher.py")],
     pathex=[str(ROOT)],
     binaries=[(str(FFMPEG), "ffmpeg")] if FFMPEG.is_file() else [],
-    datas=[(str(STATIC), "station_server/static"), (str(ROOT / "LICENSE"), ".")]
+    # The changelog is Help › What's new.
+    datas=[(str(STATIC), "station_server/static"), (str(ROOT / "LICENSE"), "."),
+           (str(ROOT / "CHANGELOG.md"), "station_server")]
           + ([(str(FFMPEG_LICENSE), "ffmpeg")] if FFMPEG_LICENSE.is_file() else []),
     excludes=["tkinter", "unittest", "pydoc", "test"],
 )

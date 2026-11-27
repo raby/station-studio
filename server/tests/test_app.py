@@ -371,3 +371,25 @@ def test_the_fallback_goes_on_air_until_the_music_is_back(api, exports, icecast,
     (tmp_path / "music-away").rename(music)  # the drive is back
     assert wait_for(lambda: any(t.startswith("Artist - Track") for t in icecast.titles))
     assert wait_for(lambda: not runner.status()["on_fallback"])
+
+
+def test_whats_new_comes_from_the_changelog(api):
+    # Help › What's new: server/CHANGELOG.md, newest first, as plain text.
+    from station_server import __version__
+    status, body = api("/api/whatsnew")
+    releases = body["releases"]
+    assert status == 200 and releases[0]["version"] == __version__
+    assert all(r["version"] != "Unreleased" for r in releases)
+    assert all("**" not in item for r in releases for g in r["groups"] for item in g["items"])
+    assert any(r["version"] == "0.20.0" and r["intro"] == ["Station logos."] for r in releases)
+
+
+def test_the_wheel_and_the_app_carry_the_changelog():
+    import tomllib
+    from pathlib import Path
+    server = Path(__file__).resolve().parent.parent
+    wheel = tomllib.loads((server / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["hatch"]["build"]["targets"]["wheel"]
+    assert wheel["force-include"] == {"CHANGELOG.md": "station_server/CHANGELOG.md"}
+    spec = (server / "packaging" / "station-server.spec").read_text()
+    assert '(str(ROOT / "CHANGELOG.md"), "station_server")' in spec
+    compile(spec, "station-server.spec", "exec")  # PyInstaller runs it: it must at least be Python
