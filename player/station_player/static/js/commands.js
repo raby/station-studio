@@ -13,11 +13,14 @@ async function checkInbox({ fresh = 0 } = {}) {
   }
   await alarmGoesOff(box.alarm, fresh);
   if (ALARM.seq !== null && String(box.ringing) !== String(ALARM.seq)) await alarmEndedElsewhere();
-  // A new version found while the window's open: say so now, as Studio
-  // and Server do, not the next time it opens.
-  if (S.lib && "update" in box && (box.update || null) !== (S.lib.update || null)) {
+  // A new version found while the window's open (or what it changes,
+  // should that come after the version): say so now, as Studio and Server
+  // do, not the next time it opens.
+  const notes = box.update_notes || [];
+  if (S.lib && "update" in box && ((box.update || null) !== (S.lib.update || null)
+                                   || notes.length !== (S.lib.update_notes || []).length)) {
     S.lib.update = box.update || null;
-    S.lib.update_notes = box.update_notes || [];
+    S.lib.update_notes = notes;
     renderUpdate();
     if (S.view.type === "settings") syncUpdateSettings();
   }

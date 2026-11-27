@@ -164,3 +164,18 @@ def test_only_the_last_few_releases_notes_are_kept():
     many = [{"tag_name": f"test-v1.{i}.0", "body": _notes(f"1.{i}.0", "x")} for i in range(25)]
     kept = updates.release_notes(many, "test-v")
     assert len(kept) == updates.NOTES_KEPT and next(iter(kept)) == "1.24.0"
+
+
+def test_the_notes_are_read_again_only_when_the_cache_changes(app, tmp_path, monkeypatch):
+    cache = tmp_path / "update-check.json"
+    updates.latest_version(app, cache, fetch=lambda: ("1.3.0", updates.release_notes(RELEASES, "test-v")), now=1.0)
+    reads = []
+    real = type(cache).read_text
+    monkeypatch.setattr(type(cache), "read_text", lambda self, *a, **k: reads.append(self) or real(self, *a, **k))
+    for _ in range(5):
+        assert updates.notes_since(cache, "1.1.0", "1.3.0")[0]["version"] == "1.3.0"
+    assert len(reads) <= 1  # once, then from memory
+    import os
+    updates.latest_version(app, cache, fetch=lambda: ("1.3.0", {}), now=2.0, force=True)
+    os.utime(cache, ns=(cache.stat().st_atime_ns, cache.stat().st_mtime_ns + 1_000_000))
+    assert updates.notes_since(cache, "1.1.0", "1.3.0") == []  # changed: read again

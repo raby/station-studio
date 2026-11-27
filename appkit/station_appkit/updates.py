@@ -110,18 +110,32 @@ def fetch_latest_with_notes(app: App, opener=urlopen) -> tuple[str | None, dict[
     return newest_release(releases, app.tag_prefix), release_notes(releases, app.tag_prefix)
 
 
+# The cache's notes, read again only when the file changes: Player's page
+# asks once a second while a new version is on offer.
+_notes_read: dict[Path, tuple[int, dict]] = {}
+
+
+def _cached_notes(cache: Path) -> dict:
+    try:
+        changed = cache.stat().st_mtime_ns
+        seen = _notes_read.get(cache)
+        if seen and seen[0] == changed:
+            return seen[1]
+        notes = json.loads(cache.read_text(encoding="utf-8")).get("notes")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    notes = notes if isinstance(notes, dict) else {}
+    _notes_read[cache] = (changed, notes)
+    return notes
+
+
 def notes_since(cache: Path, current: str, latest: str | None) -> list[dict]:
     """What the releases after `current`, up to `latest`, say they change,
     newest first, from the cache latest_version keeps. Empty when there's
     no newer version, or GitHub's notes didn't say (older releases)."""
     if not is_newer(latest, current):
         return []
-    try:
-        notes = json.loads(cache.read_text(encoding="utf-8")).get("notes")
-    except (OSError, ValueError, AttributeError):
-        return []
-    if not isinstance(notes, dict):
-        return []
+    notes = _cached_notes(cache)
     return [notes[v] for v in sorted(notes, key=lambda v: parse_version(v) or (), reverse=True)
             if isinstance(notes[v], dict) and is_newer(v, current) and not is_newer(v, latest)]
 
