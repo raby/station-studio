@@ -164,6 +164,12 @@ jobs:
           fi
           echo "Versions match: v$TAG_VERSION"
 
+      - name: the changelog says what this version changes
+        # The app's GitHub release (publish-studio-app.yml) and Update now
+        # take its notes from CHANGELOG.md; stop here, before PyPI, if it
+        # has no section for this version.
+        run: python3 scripts/release_notes.py CHANGELOG.md "${{ steps.version.outputs.version }}" "Station Studio"
+
       - name: install full deps (runtime + dev)
         # §16.13 slice-review 🟡-3: pre-flight runs the test suite
         # against the tagged commit before publishing. Without this,

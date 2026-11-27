@@ -6,6 +6,14 @@ this project uses semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Each release's notes on GitHub start with what it changes, taken
+  from this changelog. Station Player and Station Server have
+  changelogs of their own now (player/CHANGELOG.md, server/CHANGELOG.md),
+  and Station Server's Help › What's new is built from its changelog.
+  station-appkit 1.3.0 reads them.
+
 ## [1.24.0] - 2026-11-27
 
 Each app's Help can now report a problem, with the details filled in.

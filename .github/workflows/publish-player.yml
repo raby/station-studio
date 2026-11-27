@@ -128,7 +128,11 @@ jobs:
         run: |
           VERSION=${{ steps.version.outputs.version }}
           WHEEL=$(basename dist/station_player-*.whl)
-          cat > notes.md <<NOTES
+          # What's new, from player/CHANGELOG.md (stops here, before anything
+          # is published, if it has no section for this version), then how
+          # to get it. Update now shows the What's new part.
+          python3 scripts/release_notes.py player/CHANGELOG.md "$VERSION" "Station Player" > notes.md
+          cat >> notes.md <<NOTES
           Station Player $VERSION: plays station-studio's exported playlists, local music folders and internet radio.
 
           **Download** (no terminal needed; the files are below, under Assets):

@@ -199,6 +199,17 @@ Each app has its own version and release:
 | Station Server | `server/pyproject.toml` | Actions → **Publish Station Server** (`server-v<version>`) |
 | station-appkit | `appkit/pyproject.toml`, `appkit/station_appkit/__init__.py` | With whichever app's PyPI release comes first (below) |
 
+**Each release needs its changelog section first:** `CHANGELOG.md`
+(Studio), `player/CHANGELOG.md` and `server/CHANGELOG.md`, a
+`## [<version>] - <date>` heading with what changed for the people using
+it, under `### Added`, `### Changed` or `### Fixed`, newest first. (For
+Studio, the release PR turns `## [Unreleased]` into the version.) That
+section is the top of the release's notes on GitHub
+(`scripts/release_notes.py`), what Update now says the new version
+brings, and, for Station Server, Help › What's new. The workflows stop
+before anything is published when it's missing, and
+`tests/test_changelogs.py` catches it on the release PR.
+
 Each workflow's header comment says exactly what it checks and
 builds. If a download job fails, use **Re-run failed jobs** on the
 run: the draft is kept, and published once they pass.

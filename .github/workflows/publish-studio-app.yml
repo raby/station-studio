@@ -71,7 +71,11 @@ jobs:
       - name: create the draft release
         run: |
           VERSION=${{ steps.version.outputs.version }}
-          cat > notes.md <<NOTES
+          # What's new, from CHANGELOG.md (stops here, before anything is
+          # published, if it has no section for this version), then how to
+          # get it. Update now shows the What's new part.
+          python3 scripts/release_notes.py CHANGELOG.md "$VERSION" "Station Studio" > notes.md
+          cat >> notes.md <<NOTES
           Station Studio $VERSION as an app: no terminal, Python or Docker needed.
 
           **Download** (the files are below, under Assets):

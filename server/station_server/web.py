@@ -32,6 +32,8 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from station_player.setup import Picker, PickerBusy, PickerFailed, PickerUnavailable
 
+from station_appkit import changelog
+
 from station_server import __version__
 from station_server.listen import TooManyListeners
 from station_server.live import lan_addresses
@@ -192,6 +194,8 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
                 return self._json(_state(app, remote))
             if path == "/api/diagnostics":
                 return self._send(app.diagnostics().encode("utf-8"), "text/plain; charset=utf-8")
+            if path == "/api/whatsnew":  # Help › What's new
+                return self._json({"releases": whats_new()})
             if path == "/api/qr.svg":  # a link for a phone to scan (Settings › Internet)
                 from station_player.qr import svg
                 text = parse_qs(url.query).get("text", [""])[0][:300]
@@ -469,6 +473,23 @@ class RemoteAccess:
             "running": port is not None, "error": self.error,
             "addresses": [f"http://{a}:{port}/" for a in self.addresses()] if port else [],
         }
+
+
+# CHANGELOG.md: in the package once installed (the wheel and the app carry
+# it there), beside it in this repository.
+_CHANGELOGS = (Path(__file__).with_name("CHANGELOG.md"), Path(__file__).parent.parent / "CHANGELOG.md")
+
+
+def whats_new() -> list[dict]:
+    """Help › What's new: each release in the changelog, newest first, as
+    plain text (no "Unreleased")."""
+    for path in _CHANGELOGS:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        return [r.as_dict() for r in changelog.parse(text) if r.version != "Unreleased"]
+    return []
 
 
 def make_server(app: ServerApp, host: str = "127.0.0.1", port: int = DEFAULT_PORT,

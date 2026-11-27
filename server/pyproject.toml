@@ -18,7 +18,7 @@ authors = [
     { name = "Raby Whyte", email = "rabywhyte@gmail.com" },
 ]
 keywords = ["radio", "shoutcast", "icecast", "playout", "itunes", "playlist"]
-dependencies = ["station-player>=0.20", "station-appkit>=1.2.0"]
+dependencies = ["station-player>=0.20", "station-appkit>=1.3.0"]
 
 # For working on it, not installed with it. Versions pinned in the
 # repo's uv.lock: `uv sync --package station-server` from the repo root.
@@ -46,6 +46,10 @@ station-server = "station_server.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["station_server"]
+
+# Help › What's new is read from the changelog, so the wheel carries it.
+[tool.hatch.build.targets.wheel.force-include]
+"CHANGELOG.md" = "station_server/CHANGELOG.md"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1565,6 +1565,17 @@ function websiteSettings() {
   );
 }
 
+// Help › What's new: the releases, from Station Server's changelog.
+async function loadWhatsNew() {
+  S.whatsnew = null;  // asked for: don't ask again while it's on its way
+  try {
+    S.whatsnew = (await api("/api/whatsnew")).releases || [];
+  } catch {
+    S.whatsnew = [];
+  }
+  if (S.view.type === "help") render();
+}
+
 async function copyDiagnostics() {
   try {
     const res = await fetch("/api/diagnostics", { cache: "no-store" });
@@ -1913,84 +1924,19 @@ function renderHelp() {
         "“Something is sending there now”: Winamp's SHOUTcast plugin or another Station Server is connected. A server takes one source at a time (per mount, on Icecast).",
         "“The listener count can't be read”: the server's status page is private. Station Server still streams; it just can't show how many are listening."),
     ],
-    new: () => [
-      el("h2", {}, "0.20: station logos"),
-      list("Edit › Station › Logo: give a station a logo. It shows on the station page, on the stream's own page when this computer streams it (and as its icon in a browser tab), and on your website's now/next page (Settings › Website).",
-        "Station Player 0.20 picks the logo up by itself for stations with a now/next feed, and Find logo there fetches it from a station this computer streams."),
-      h2("0.19.1"),
-      list("Presenter alerts: “has finished” now waits until the presenter has been gone for two minutes, so an encoder reconnecting, or the station reconnecting, no longer sends “finished” and then “is live” again. A presenter taking over from another sends one of each, and a show still live when the station is taken off air is told as finished.",
-        "Also send to: titles reach the second server in order. Changing its address asks for its password again. The Ready check and Test the second server always check the server that's saved, and a test of the main server is never mistaken for the second one."),
-      h2("0.19: a second server"),
-      list("Edit › Server › Also send to: the live stream goes to a second SHOUTcast or Icecast server at the same time, like a hosted account, while this computer (or the main server) carries on as before. Test the second server checks its address and password.",
-        "If the second server can't be reached, the station stays on air and keeps trying it every few seconds; the station page and the Ready check say why. Rehearsals don't go there."),
-      h2("0.18: presenter alerts"),
-      list("Settings › Alerts › Tell me when a presenter goes live: a phone notification or email when a presenter goes live on a station, with their name, and another when they finish, saying how long they were on (not for rehearsals).",
-        "On Windows, a server at localhost (Icecast or a DNAS on the same computer) no longer takes about two seconds for every connection and title update."),
-      h2("0.17.1"),
-      list("Settings › Internet: a DuckDNS name saved without its token no longer stops other settings saving, a new name is sent to DuckDNS straight away, and Use never suggests more than the 500 listeners a station can allow.",
-        "Test connection: a station's saved password is used however its address is written, and a server saved while on air (not yet switched over to) has its password tested properly.",
-        "Use keeps the rest of a station's server setting as it was, and the tester copes with IPv6 addresses.",
-        "On a Mac, the window no longer waits while Station Server looks for the router at start-up."),
-      h2("0.17: Icecast & SHOUTcast"),
-      list("Help › Icecast & SHOUTcast: what they are, setting up Icecast for free on a Mac, Windows or Linux, the icecast.xml settings that matter, and SHOUTcast's source port and stream numbers.",
-        "Test a server there, step by step, without a station or going on air: the address, the port, which kind of server it is, the source port, the password and the listener count, each saying what to change. Edit › Server › Test connection shows the same steps.",
-        "Nothing already sending to a server (Winamp, say) is knocked off by a test."),
-      h2("0.16.7"),
-      list("On a Mac, Station Server starts as it did up to 0.16.3 again, so the window comes back after an update. If Look at the router is blocked, quit and open Station Server from Applications (once: the router keeps the forward). The window also gets macOS to ask about the local network."),
-      h2("0.16.6"),
-      list("On a Mac, Station Server gets macOS to ask whether it may find devices on your local network. (Kept in 0.16.7, from the window.)"),
-      h2("0.16.5"),
-      list("Settings › Internet › Try it from a phone shows two codes: one for a phone away from home (on mobile data, like a listener) and one for a phone on the same Wi-Fi as this computer, with why the internet address often doesn't play at home."),
-      h2("0.16.4"),
-      list("On a Mac, Station Server always starts through the app (opened, at login and after an update), which stays on quietly in the background, so macOS lets it reach the router and servers on this network. (Undone in 0.16.7: the window didn't always come back after an update.)"),
-      h2("0.16.3"),
-      list("Look at the router searches out of this computer's own network even with a VPN on, and also asks the router directly, so more routers are found."),
-      h2("0.16.2"),
-      list("Help › Streaming is rewritten, with diagrams: how listeners reach the station, ports and the router, DuckDNS, how many listeners, this computer or a hosted server, and what to do when it doesn't work.",
-        "On a Mac, Look at the router says when macOS needs Station Server allowed in System Settings › Privacy & Security › Local Network, and the app now asks for it.",
-        "Settings › Internet warns when the internet provider shares one address between customers, so a forwarded port can't work."),
-      h2("0.16.1"),
-      list("Check my internet finds this connection's outside address a second way, if Cloudflare's speed test page doesn't give it."),
-      h2("0.16: Settings › Internet"),
-      list(
-        "Check my internet measures the upload and suggests how many listeners each station streaming from this computer can take, with Use to set it.",
-        "Opens each station's port on the router (UPnP), keeps a free DuckDNS name pointing at this connection, and shows a code to scan from a phone on mobile data.",
-        "The Ready check says when a station allows more listeners than the upload suits.",
-        "Changing a station's server while it's on air offers to switch over straight away, and the status line shows where it's really streaming until then."),
-      h2("0.15: streaming from this computer"),
-      list(
-        "Station Server can be the station's server: choose This computer in Edit › Server, and listeners connect straight to it. No DNAS, Icecast or hosting needed (Help › Streaming)."),
-      h2("0.14: on your website"),
-      list(
-        "Settings › Website publishes each station's now playing, coming up and just played to a GitHub Pages site, with a box to embed on your website."),
-      h2("0.13: Station Studio link"),
-      list(
-        "Station Studio sends each week straight here, with a link code: no shared folder.",
-        "Station Studio's station page shows what's on air here, the weeks it has, and warns when next week is missing."),
-      h2("0.12.1: tabs"),
-      list("A station's settings, Settings and Help are in tabs, like Station Player's."),
-      h2("0.12: live shows"),
-      list(
-        "Presenters go live from BUTT, Mixxx or Winamp, connecting to this computer: the song fades out under them and the music comes back when they leave.",
-        "Each presenter has their own password, which names them on the page, in the play log and on the recording.",
-        "Presenters' volume is evened out to match the music.",
-        "Each live show is recorded; End live show takes a presenter off air."),
-      h2("0.11: crossfades and jingles"),
-      list(
-        "A crossfade between songs, of 1 to 10 seconds.",
-        "Jingles or idents after every few songs, shuffled.",
-        "Skip fades out quickly, whatever the crossfade."),
-      h2("0.10: the switch-over kit"),
-      list(
-        "Ready check: everything a station needs, with what to fix.",
-        "Rehearse on a test stream while Winamp carries on, then Go live.",
-        "It notices Winamp (or anything else) still sending to the server."),
-      h2("0.9: keeping an eye on it"),
-      list(
-        "The listener count, and Listen to hear the broadcast itself.",
-        "Alerts to your phone or email when a station is off air.",
-        "Phone access from a phone on the same network."),
-    ],
+    // From server/CHANGELOG.md (GET /api/whatsnew), fetched the first
+    // time this page is opened.
+    new: () => {
+      if (S.whatsnew === undefined) loadWhatsNew();
+      if (!S.whatsnew) return [p("Loading…")];  // on its way
+      if (!S.whatsnew.length) return [p("Couldn't read what's new. Each release's notes are on GitHub."),
+        el("div", { class: "actions" }, el("a", { class: "btn", href: "https://github.com/raby/station-studio/releases?q=server", target: "_blank", rel: "noopener" }, "Releases on GitHub"))];
+      return S.whatsnew.flatMap((r) => [
+        h2(r.version === S.state?.version ? `${r.version} (this version)` : r.version),
+        ...r.intro.map((t) => p(t)),
+        ...r.groups.flatMap((g) => [g.heading ? el("h3", {}, g.heading) : null, list(...g.items)].filter(Boolean)),
+      ]);
+    },
     trouble: () => [
       el("h2", {}, "If something goes wrong"),
       p("If the server goes away, the station keeps playing and reconnects every few seconds. A track whose file can't be read is skipped. If none can be (the music's drive is missing, say), the station plays its fallback, a folder of jingles or songs set in Edit › Station, and then tries the playlist again; with no fallback it sends silence. The page says which. Tracks the playlist names but this computer can't find are listed under the station: add the folder they're in as a music folder."),
