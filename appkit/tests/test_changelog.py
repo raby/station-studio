@@ -59,10 +59,14 @@ def test_as_dict_is_plain_text_for_a_page():
     assert got["version"] == "0.26.0" and got["date"] == "2026-11-27"
 
 
-def test_section_is_the_release_as_written():
+def test_section_is_the_release_with_each_line_whole():
+    # GitHub keeps every line break in a release's notes: wrapped lines are joined.
     got = changelog.section(TEXT, "0.26.0")
-    assert got.startswith("A short intro,\nover two lines.\n\n### Added")
+    assert got.startswith("A short intro, over two lines.\n\n### Added\n\n- Help › **Report a problem**: a button "
+                          "that opens a new [GitHub issue](https://github.com/raby/station-studio/issues/new), "
+                          "with `this` filled in.\n- A second thing.")
     assert got.endswith("- A fix.")
+    # A code block is kept as it is.
     assert changelog.section(TEXT, "0.25.0") == "- No groups here.\n\n```\n- not a bullet: inside a code block\n```"
     assert changelog.section(TEXT, "9.9.9") is None
     assert changelog.section(TEXT, "Unreleased") is None  # nothing under it

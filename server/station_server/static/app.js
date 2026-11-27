@@ -1947,11 +1947,15 @@ function renderHelp() {
       if (!S.whatsnew) return [p("Loading…")];  // on its way
       if (!S.whatsnew.length) return [p("Couldn't read what's new. Each release's notes are on GitHub."),
         el("div", { class: "actions" }, el("a", { class: "btn", href: "https://github.com/raby/station-studio/releases?q=server", target: "_blank", rel: "noopener" }, "Releases on GitHub"))];
-      return S.whatsnew.flatMap((r) => [
-        h2(r.version === S.state?.version ? `${r.version} (this version)` : r.version),
-        ...r.intro.map((t) => p(t)),
-        ...r.groups.flatMap((g) => [g.heading ? el("h3", {}, g.heading) : null, list(...g.items)].filter(Boolean)),
-      ]);
+      return [
+        ...S.whatsnew.flatMap((r) => [
+          h2(r.version === S.state?.version ? `${r.version} (this version)` : r.version),
+          ...r.intro.map((t) => p(t)),
+          ...r.groups.flatMap((g) => [g.heading ? el("h3", {}, g.heading) : null, list(...g.items)].filter(Boolean)),
+        ]),
+        p("Earlier versions are on GitHub, with every release's downloads."),
+        el("div", { class: "actions" }, el("a", { class: "btn", href: "https://github.com/raby/station-studio/releases?q=server", target: "_blank", rel: "noopener" }, "Releases on GitHub")),
+      ];
     },
     trouble: () => [
       el("h2", {}, "If something goes wrong"),
