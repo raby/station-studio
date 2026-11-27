@@ -49,6 +49,7 @@ function renderUpdate() {
   }
   box.replaceChildren(...[  // (replaceChildren would show a null as "null")
     el("div", {}, `Station Player ${latest} is out.`),
+    whatsNewNotes(S.lib.update_notes),
     u && u.stage === "failed" && u.version === latest ? updateFailure(u) : null,
     el("div", { class: "row" },
       el("button", { type: "button", class: "btn small primary", onclick: () => startUpdate(latest) }, "Update now"),
@@ -58,6 +59,20 @@ function renderUpdate() {
       }, "Not now")),
   ].filter(Boolean));
   box.hidden = false;
+}
+
+// What the new version (and any between) changes, from its release notes:
+// folded away under "What's new" until asked for.
+function whatsNewNotes(releases) {
+  if (!releases || !releases.length) return null;
+  const several = releases.length > 1;
+  return el("details", { class: "update-notes", open: S.notesOpen || false,
+                         ontoggle: (e) => { S.notesOpen = e.currentTarget.open; } },
+    el("summary", {}, "What's new"),
+    el("div", { class: "update-notes-body" }, releases.map((r) => el("div", { class: "update-release" },
+      several ? el("div", { class: "update-version" }, r.version) : null,
+      ...r.intro.map((t) => el("p", {}, t)),
+      el("ul", {}, r.groups.flatMap((g) => g.items).map((t) => el("li", {}, t)))))));
 }
 
 function updateStageText(u) {

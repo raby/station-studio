@@ -5,6 +5,14 @@ it. The newest is first. Each release's notes on GitHub, and what
 Update now says about a new version, come from here, so a release
 needs its section before it can go out (see CONTRIBUTING, "Releasing").
 
+## [Unreleased]
+
+### Added
+
+- When a new version is out, What's new under the notice says what it
+  changes (and what any versions in between changed), from its release
+  notes.
+
 ## [0.26.0] - 2026-11-27
 
 ### Added

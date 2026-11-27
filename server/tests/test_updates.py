@@ -75,6 +75,16 @@ def test_no_notice_for_this_version_or_older(tmp_path):
     assert app.state()["update"] is None
 
 
+def test_update_now_says_what_the_new_version_changes(tmp_path):
+    import json
+    app = make_app(tmp_path)
+    app.store.home.mkdir(parents=True, exist_ok=True)
+    (app.store.home / "update-check.json").write_text(json.dumps({"checked": 0, "latest": "99.0.0", "notes": {"99.0.0": {"version": "99.0.0", "date": None, "intro": [], "groups": [{"heading": "Added", "items": ["Something new."]}]}}}))
+    assert app.state()["update_notes"] == []
+    app.latest = "99.0.0"
+    assert app.state()["update_notes"][0]["groups"][0]["items"] == ["Something new."]
+
+
 def test_state_says_what_a_problem_report_needs(tmp_path, monkeypatch):
     from station_appkit import report
     monkeypatch.setattr(report, "in_docker", lambda: False)  # as on a computer, not a container

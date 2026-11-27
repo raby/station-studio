@@ -532,9 +532,15 @@ def test_a_new_version_found_while_the_window_is_open_shows_without_reopening(pa
     app.store.config.check_updates = True
     note = page.locator("#update")
     sync_api.expect(note).to_be_hidden()
-    app.check_for_update(fetch=lambda: "99.0.0").join(5)
+    notes = {"99.0.0": {"version": "99.0.0", "date": None, "intro": [],
+                        "groups": [{"heading": "Added", "items": ["Something new."]}]}}
+    app.check_for_update(fetch=lambda: ("99.0.0", notes)).join(5)
     sync_api.expect(note).to_contain_text("Station Player 99.0.0 is out", timeout=5000)
     sync_api.expect(note.get_by_role("button", name="Update now")).to_be_visible()
+    # What it changes, folded under What's new until asked for.
+    sync_api.expect(note.get_by_text("Something new.")).to_be_hidden()
+    note.get_by_text("What's new").click()
+    sync_api.expect(note.get_by_text("Something new.")).to_be_visible()
 
 
 def test_update_from_settings(page, player, monkeypatch):

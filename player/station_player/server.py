@@ -328,6 +328,8 @@ class PlayerApp:
             "mac_app": self.mac_app,
             "remote": self.remote_info(),
             "update": self.update_offered(config["check_updates"]),
+            # What the releases since this one change (Update now's What's new).
+            "update_notes": self.update_notes(config["check_updates"]),
             "updating": self.updater.status() if self.updater else None,
             # Help › Report a problem: the issue link and the log file.
             "report": problem_report.details("Station Player", __version__, install_kind()),
@@ -492,7 +494,12 @@ class PlayerApp:
         # the window only read /api/state when it opened (or when something
         # changed), so it would only have said so the next time it opened.
         out["update"] = self.update_offered(self.store.config.check_updates)
+        if out["update"]:
+            out["update_notes"] = self.update_notes(self.store.config.check_updates)
         return out
+
+    def update_notes(self, check_updates: bool) -> list[dict]:
+        return updates.notes_since(self.store.home / "update-check.json", self.update_offered(check_updates))
 
     def update_offered(self, check_updates: bool) -> str | None:
         """The newer version to offer, if there is one and looking is on

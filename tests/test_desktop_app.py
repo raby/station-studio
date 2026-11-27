@@ -126,6 +126,19 @@ def test_api_app_state_wins_over_the_page_catch_all():
     assert state["update"] is None
 
 
+def test_api_app_says_what_the_new_version_changes(tmp_path):
+    # Update now's What's new: from the cache the daily check keeps.
+    import json
+    cache = tmp_path / "update-check.json"
+    notes = {NEXT: {"version": NEXT, "date": None, "intro": [], "groups": [{"heading": "Added", "items": ["Sorting."]}]}}
+    desk = desktop.DesktopState(8001, lambda: None, kind="mac", cache=cache,
+                                fetch_latest=lambda: (NEXT, notes), home=tmp_path, browser="Google Chrome")
+    assert desk.state()["latest_notes"] == []
+    desk.check_for_updates(force=True)
+    assert json.loads(cache.read_text())["notes"] == notes
+    assert desk.state()["latest_notes"] == [notes[NEXT]]
+
+
 def test_api_app_hides_versions_that_arent_newer():
     client, _, _ = make_app(latest=__version__)
     assert client.get("/api/app").json()["latest"] is None

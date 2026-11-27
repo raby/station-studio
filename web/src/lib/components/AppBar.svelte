@@ -199,7 +199,20 @@
           <button type="button" class="btn-primary" on:click={update} disabled={busy} data-testid="app-update-now">Update now</button>
           <button type="button" on:click={() => notNow(latest)} data-testid="app-update-later">Not now</button>
         </span>
-        {#if state.release_page}
+        {#if state.latest_notes?.length}
+          <details class="notes" data-testid="app-update-notes">
+            <summary>What's new</summary>
+            <div class="notes-body">
+              {#each state.latest_notes as r (r.version)}
+                {#if state.latest_notes.length > 1}<div class="notes-version">{r.version}</div>{/if}
+                {#each r.intro as t}<p>{t}</p>{/each}
+                <ul>
+                  {#each r.groups.flatMap((g) => g.items) as item}<li>{item}</li>{/each}
+                </ul>
+              {/each}
+            </div>
+          </details>
+        {:else if state.release_page}
           <a href={state.release_page} target="_blank" rel="noopener">What's new</a>
         {/if}
       </span>
@@ -235,6 +248,26 @@
 {/if}
 
 <style>
+  /* What's new in the update, folded under its summary. */
+  .notes summary {
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .notes-body {
+    max-height: 40vh;
+    overflow: auto;
+  }
+  .notes-body ul {
+    margin: 4px 0 8px;
+    padding-left: 18px;
+  }
+  .notes-body p {
+    margin: 4px 0;
+  }
+  .notes-version {
+    font-weight: 600;
+    margin-top: 6px;
+  }
   /* Sits at the foot of the sidebar (see +layout.svelte). */
   .app-bar {
     display: flex;

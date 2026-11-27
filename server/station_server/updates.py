@@ -19,8 +19,16 @@ def newest_release(releases) -> str | None:
     return _updates.newest_release(releases, TAG_PREFIX)
 
 
-def _fetch_latest() -> str | None:
-    return _updates.fetch_latest(APP)
+def _fetch_latest():
+    """The newest release, and what recent ones say they change (one request)."""
+    return _updates.fetch_latest_with_notes(APP)
+
+
+def notes_since(cache: Path, latest: str | None) -> list[dict]:
+    """What the releases after this one, up to `latest`, change, newest
+    first (for Update now), from the cache latest_version keeps."""
+    from station_server import __version__
+    return _updates.notes_since(cache, __version__, latest)
 
 
 def latest_version(cache: Path, fetch=None, now: float | None = None, force: bool = False,

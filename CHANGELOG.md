@@ -13,6 +13,10 @@ this project uses semantic versioning.
   changelogs of their own now (player/CHANGELOG.md, server/CHANGELOG.md),
   and Station Server's Help › What's new is built from its changelog.
   station-appkit 1.3.0 reads them.
+- When a new version is out, What's new under the notice says what it
+  changes (and what any versions in between changed), from its release
+  notes, instead of linking to the release page. Station Player and
+  Station Server show it the same way.
 
 ## [1.24.0] - 2026-11-27
 
