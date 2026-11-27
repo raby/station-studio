@@ -47,6 +47,7 @@ def get_meta() -> MetaResponse:
 def get_report() -> dict:
     """Help › Report a problem: a new GitHub issue with this copy's version
     and computer filled in, and the log file (None when it logs to the
-    terminal it was started from). See station_appkit.report."""
+    terminal it was started from, or to Docker's log in the image). See
+    station_appkit.report."""
     from station_studio import __version__
     return problem_report.details("Station Studio", __version__, install_kind())

@@ -16,9 +16,15 @@ from pathlib import Path
 
 ISSUES_NEW = "https://github.com/raby/station-studio/issues/new"
 
-# How each install kind reads in a report. None (pip, pipx, Docker, a
-# checkout) is "installed with pip": the commonest of those.
+# How each install kind reads in a report. None (pip, pipx, a checkout)
+# is "installed with pip", the commonest of those; in a container, "Docker".
 INSTALLED = {"mac": "downloaded Mac app", "windows": "downloaded Windows app", None: "installed with pip"}
+
+
+def in_docker() -> bool:
+    """Running in a Docker container (Station Studio's image): its log is
+    the container's (docker compose logs), not a file or a terminal."""
+    return Path("/.dockerenv").exists()
 
 
 def system(platform_name: str | None = None) -> str:
@@ -51,14 +57,15 @@ def log_file() -> Path | None:
 def details(app_name: str, version: str, kind: str | None) -> dict:
     """What a report says about this copy, and what the app shows beside it."""
     log = log_file()
+    docker = kind is None and in_docker()
     about = {
         "app": app_name,
         "version": version,
-        "installed": INSTALLED.get(kind, INSTALLED[None]),
+        "installed": "Docker" if docker else INSTALLED.get(kind, INSTALLED[None]),
         "system": system(),
         "python": platform.python_version(),
     }
-    return {**about, "log_file": str(log) if log else None, "issue_url": issue_url(about)}
+    return {**about, "log_file": str(log) if log else None, "in_docker": docker, "issue_url": issue_url(about)}
 
 
 def issue_url(about: dict) -> str:

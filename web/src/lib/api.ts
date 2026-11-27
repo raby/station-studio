@@ -723,6 +723,8 @@ export interface ProblemReport {
   system: string;
   python: string;
   log_file: string | null;
+  /** In Station Studio's Docker image: the log is the container's. */
+  in_docker: boolean;
   issue_url: string;
 }
 

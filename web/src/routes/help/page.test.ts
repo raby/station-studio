@@ -14,6 +14,7 @@ const REPORT = {
   system: 'macOS 15.1 (Apple Silicon)',
   python: '3.12.7',
   log_file: '/Users/rob/Library/Application Support/Station Studio/station-studio.log',
+  in_docker: false,
   issue_url: 'https://github.com/raby/station-studio/issues/new?title=%5BStation+Studio%5D+&body=x',
 };
 
@@ -60,6 +61,12 @@ describe('Help page', () => {
     const { findByText, queryByTestId } = render(Page);
     expect(await findByText(/writes its log in the terminal/)).toBeInTheDocument();
     expect(queryByTestId('log-file')).toBeNull();
+  });
+
+  it('points Docker users at the container’s log', async () => {
+    getReportMock.mockResolvedValue({ ...REPORT, log_file: null, installed: 'Docker', in_docker: true });
+    const { findByText } = render(Page);
+    expect(await findByText('docker compose logs station-studio')).toBeInTheDocument();
   });
 
   it('still links to the issues when the details can’t be fetched', async () => {

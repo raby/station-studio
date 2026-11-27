@@ -26,6 +26,20 @@ def test_the_issue_has_the_app_version_and_computer_filled_in(monkeypatch):
     assert "**What happened**" in q["body"]
 
 
+@pytest.fixture(autouse=True)
+def not_in_docker(monkeypatch):
+    monkeypatch.setattr(report, "in_docker", lambda: False)
+
+
+def test_in_docker_it_says_so(monkeypatch):
+    monkeypatch.setattr(report, "in_docker", lambda: True)
+    got = report.details("Station Studio", "1.24.0", None)
+    assert got["installed"] == "Docker" and got["in_docker"] is True
+    assert "(Docker)" in urllib.parse.unquote_plus(got["issue_url"])
+    # A downloaded app is never "Docker", whatever the computer has at /.dockerenv.
+    assert report.details("Station Studio", "1.24.0", "mac")["in_docker"] is False
+
+
 @pytest.mark.parametrize("kind, says", [("windows", "downloaded Windows app"), (None, "installed with pip"),
                                         ("something new", "installed with pip")])
 def test_how_it_was_installed(kind, says):

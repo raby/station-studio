@@ -75,7 +75,9 @@ def test_no_notice_for_this_version_or_older(tmp_path):
     assert app.state()["update"] is None
 
 
-def test_state_says_what_a_problem_report_needs(tmp_path):
+def test_state_says_what_a_problem_report_needs(tmp_path, monkeypatch):
+    from station_appkit import report
+    monkeypatch.setattr(report, "in_docker", lambda: False)  # as on a computer, not a container
     got = make_app(tmp_path).state()["report"]
     assert got["app"] == "Station Server" and got["version"] == __version__
     assert got["installed"] == "installed with pip"

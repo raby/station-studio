@@ -2989,9 +2989,11 @@ def test_meta_returns_all_four_lists_sorted(api):
         assert value == sorted(value), f"{key} list is not sorted: {value}"
 
 
-def test_report_fills_in_this_copy_for_a_new_issue(api):
+def test_report_fills_in_this_copy_for_a_new_issue(api, monkeypatch):
     """Help › Report a problem (station_appkit.report)."""
+    from station_appkit import report
     from station_studio import __version__
+    monkeypatch.setattr(report, "in_docker", lambda: False)  # as on a computer, not a container
     client, _ = api
     r = client.get("/api/report")
     assert r.status_code == 200

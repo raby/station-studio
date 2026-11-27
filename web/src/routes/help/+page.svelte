@@ -149,6 +149,9 @@
           <p>
             {#if report.log_file}
               The log file: <code class="path" data-testid="log-file">{report.log_file}</code>
+            {:else if report.in_docker}
+              This copy runs in Docker, so its log is the container’s:
+              <code class="path">docker compose logs station-studio</code> shows it.
             {:else}
               This copy writes its log in the terminal it was started from: copy what it says there.
             {/if}

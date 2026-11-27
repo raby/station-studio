@@ -727,8 +727,10 @@ def test_new_version_notice_and_its_setting(tmp_path):
     assert ConfigStore().config.check_updates is False
 
 
-def test_state_says_what_a_problem_report_needs():
+def test_state_says_what_a_problem_report_needs(monkeypatch):
+    from station_appkit import report
     from station_player import __version__
+    monkeypatch.setattr(report, "in_docker", lambda: False)  # as on a computer, not a container
     got = PlayerApp(ConfigStore(), scan=False).state()["report"]
     assert got["app"] == "Station Player" and got["version"] == __version__
     assert got["installed"] == "installed with pip"  # not the downloaded app
