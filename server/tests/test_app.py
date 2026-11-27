@@ -390,4 +390,6 @@ def test_the_wheel_and_the_app_carry_the_changelog():
     server = Path(__file__).resolve().parent.parent
     wheel = tomllib.loads((server / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["hatch"]["build"]["targets"]["wheel"]
     assert wheel["force-include"] == {"CHANGELOG.md": "station_server/CHANGELOG.md"}
-    assert '(str(ROOT / "CHANGELOG.md"), "station_server")' in (server / "packaging" / "station-server.spec").read_text()
+    spec = (server / "packaging" / "station-server.spec").read_text()
+    assert '(str(ROOT / "CHANGELOG.md"), "station_server")' in spec
+    compile(spec, "station-server.spec", "exec")  # PyInstaller runs it: it must at least be Python
