@@ -6,6 +6,12 @@ this project uses semantic versioning.
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-11-27
+
+Each app's Help can now report a problem, with the details filled in.
+Released with Station Player 0.26.0, Station Server 0.25.0 and
+station-appkit 1.2.0, which all three need.
+
 ### Added
 
 - Help › **Report a problem**: a button that opens a new GitHub issue
