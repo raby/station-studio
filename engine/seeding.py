@@ -94,14 +94,43 @@ STATIONS_DIR = _REPO_STATIONS_DIR
 # Both the template-declared path AND this registry use
 # only-set-if-absent semantics (§16.14.t9 D4 + D6 uniformity):
 # the operator's API customisations persist across re-seeds. To
-# revert to the template default, DELETE the rule via API; the
-# next seed_station writes the template value back.
+# revert to the template default, DELETE the rule via API: it writes
+# the template value straight back (`station_rule_defaults`), since
+# start-up only re-seeds an empty database.
 _STATION_LIST_RULES: dict[str, dict[str, list[str]]] = {
     # Empty today (§16.14.t9 c2 migrated the starter's rule into
     # stations/starter.json's `rules:` block). New entries land
     # here only when a station can't carry the value in its
     # committed template — extremely rare.
 }
+
+
+def _declared_rules(slug: str, template) -> dict[str, int | list[str]]:
+    """The rules a station declares a value for, with seed_station's
+    precedence: its template's `rules:` block, then the
+    `_STATION_LIST_RULES` fallback for list keys the template leaves
+    out. Keys it doesn't declare use the registry defaults."""
+    return {
+        **_STATION_LIST_RULES.get(slug, {}),
+        **template.rule_list_overrides,
+        **template.rule_int_overrides,
+    }
+
+
+def station_rule_defaults(slug: str, template_raw: dict) -> dict[str, int | list[str]]:
+    """This station's own default for each rule it declares (see
+    `_declared_rules`), from the template as stored on the station.
+
+    What the rules API calls the default, and what Clear override
+    (DELETE) puts back, so a template-declared value isn't lost to the
+    registry default. `{}` if the template doesn't parse: the registry
+    defaults then stand, as they would for an undeclared key.
+    """
+    try:
+        template = parse_template(template_raw)
+    except (TemplateError, KeyError, TypeError, ValueError):
+        return {}
+    return _declared_rules(slug, template)
 
 
 def _rule_row_exists(db: Session, *, station_id: int, key: str) -> bool:
@@ -127,8 +156,8 @@ def seed_station(db: Session, path: Path) -> dict:
     only-set-if-absent semantics (D4): the Rule row gets written
     only when none exists for that (station_id, key). API
     customisations persist across re-seeds. To revert a rule to
-    its template/registry default, DELETE it via API; the next
-    `seed_station` writes the default back.
+    its template/registry default, DELETE it via API: that writes
+    the station's own default straight back (`station_rule_defaults`).
 
     Precedence for a given key:
       1. Existing Rule row (operator's API edit) — left untouched.
@@ -168,10 +197,9 @@ def seed_station(db: Session, path: Path) -> dict:
     # fallback. Template wins for keys declared in both; registry
     # supplies keys absent from the template. Both use
     # only-set-if-absent (D4 + D6).
-    registry_list = _STATION_LIST_RULES.get(slug, {})
-    # Template list-rules override registry entries for the same key.
-    effective_list = {**registry_list, **template.rule_list_overrides}
-    effective_int = dict(template.rule_int_overrides)
+    declared = _declared_rules(slug, template)
+    effective_int = {k: v for k, v in declared.items() if k in template.rule_int_overrides}
+    effective_list = {k: v for k, v in declared.items() if k not in effective_int}
 
     rules_applied = 0
     if effective_int or effective_list:

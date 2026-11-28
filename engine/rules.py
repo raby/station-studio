@@ -33,6 +33,7 @@ no rule row exists.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -306,8 +307,23 @@ def clear_rule(db: Session, *, station_id: int, key: str) -> bool:
     return True
 
 
-def get_all_rules(db: Session, *, station_id: int) -> list[dict[str, Any]]:
+def get_all_rules(
+    db: Session,
+    *,
+    station_id: int,
+    station_defaults: Mapping[str, int | list[str]] | None = None,
+) -> list[dict[str, Any]]:
     """Return every rule (int + list) with its effective value, default, override.
+
+    ``station_defaults`` are the station's own defaults for the rules
+    it declares (``engine.seeding.station_rule_defaults``): its
+    template's ``rules:`` block. For those keys ``default_value`` is
+    the station's, not the registry's, and ``is_override`` means the
+    effective value differs from it — so a freshly seeded starter
+    doesn't show its own template value as "overridden", and a value
+    that differs (e.g. cleared to ``[]`` by an older Clear override)
+    does, with Reset to put it back. Without ``station_defaults``,
+    every default is the registry's.
 
     Returns a list of dicts: ``{key, kind, value, default_value,
     description, max_value, is_override}`` where:
@@ -330,6 +346,7 @@ def get_all_rules(db: Session, *, station_id: int) -> list[dict[str, Any]]:
     from the API) closes here: GET now surfaces list rules with
     their JSON-native value shape; PUT + DELETE dispatch by kind.
     """
+    defaults = station_defaults or {}
     overrides = {
         r.key: r
         for r in db.query(Rule).filter(Rule.station_id == station_id).all()
@@ -341,14 +358,16 @@ def get_all_rules(db: Session, *, station_id: int) -> list[dict[str, Any]]:
         if key in RULE_DEFAULTS:
             defn = RULE_DEFAULTS[key]
             override = overrides.get(key)
+            value = int(override.value) if override is not None else defn.value
+            default = int(defaults.get(key, defn.value))
             result.append({
                 "key": key,
                 "kind": "int",
-                "value": int(override.value) if override is not None else defn.value,
-                "default_value": defn.value,
+                "value": value,
+                "default_value": default,
                 "description": defn.description,
                 "max_value": defn.max_value,
-                "is_override": override is not None,
+                "is_override": value != default,
             })
         else:
             # key in RULE_LIST_DEFAULTS — all_keys union guarantees
@@ -363,14 +382,15 @@ def get_all_rules(db: Session, *, station_id: int) -> list[dict[str, Any]]:
                 )
             else:
                 effective = list(defn.value)
+            default_list = list(defaults.get(key, defn.value))
             result.append({
                 "key": key,
                 "kind": "list",
                 "value": effective,
-                "default_value": list(defn.value),
+                "default_value": default_list,
                 "description": defn.description,
                 "max_value": None,
-                "is_override": override is not None,
+                "is_override": effective != default_list,
             })
     return result
 

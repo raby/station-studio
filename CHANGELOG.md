@@ -20,8 +20,17 @@ this project uses semantic versioning.
 - No page asks you to type a command any more. Where one did, there's a
   button or plain words instead: Try again when Station Studio isn't
   answering, the welcome when there are no stations, Generate week 1 on
-  a new station, and Rebuild the layout in the visualiser. Clearing a
-  rule's value says plainly that it goes back to the default.
+  a new station, and Rebuild the layout in the visualiser. Resetting a
+  rule says which value it puts back.
+
+### Fixed
+
+- Resetting a rule that a station's template sets (the starter's
+  "Cross pool dedup sources", say) now puts the template's value back.
+  Before, it went to Station Studio's own default and the template's
+  value never came back. A rule already lost that way shows as
+  overridden, so Reset to default restores it. A template's own values
+  now read as the station's default rather than as overridden.
 
 ## [1.25.0] - 2026-11-27
 

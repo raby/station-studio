@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from api.deps import get_db
 from api.main import app
 from engine.database import make_engine, make_sessionmaker
-from engine.models import Base, Station
+from engine.models import Base, Rule, Station
 
 
 @pytest.fixture
@@ -492,12 +492,12 @@ def test_put_bool_value_rejected_at_schema_layer(api):
 
 
 def test_list_rule_explicit_empty_persists_distinct_from_default(api):
-    """Setting `[]` via PUT IS persisted as an explicit "no
-    exclusion" override (is_override=True). Distinct from the
-    registry default which also reads as [] but with
-    is_override=False. This is the engine-level distinction
-    (§16.14.t5 c1: set_rule_list_value persists empty), now
-    pinned at the API surface."""
+    """Setting `[]` via PUT is persisted (set_rule_list_value stores
+    empty, §16.14.t5 c1), and the GET reads it back. `is_override`
+    compares with the station's default, which for this station is
+    the registry's `[]`: so an explicit `[]` reads as the default,
+    not an override. (Pre-fix it meant "a row exists"; see
+    test_template_declared_rule_* for why that changed.)"""
     client, Session = api
     _seed_station(Session)
 
@@ -516,11 +516,132 @@ def test_list_rule_explicit_empty_persists_distinct_from_default(api):
     assert r.status_code == 200
     body = r.json()
     assert body["value"] == []
-    assert body["is_override"] is True
+    assert body["is_override"] is False
 
-    # GET confirms persistence.
-    by_key = {
-        ru["key"]: ru for ru in
-        client.get("/api/stations/rb/rules").json()["rules"]
+    # GET confirms persistence: the row is there.
+    with Session() as db:
+        st = db.query(Station).filter(Station.slug == "rb").one()
+        row = db.query(Rule).filter_by(
+            station_id=st.id, key="cross_pool_dedup_sources",
+        ).one()
+        assert row.value == ""
+
+
+# ---------- a template's own rule values (Clear override puts them back) --
+
+
+def _seed_starter(Session, tmp_path, *, extra_rules: dict | None = None) -> None:
+    """The bundled starter, seeded the way first start does it, with
+    `extra_rules` added to its `rules:` block."""
+    import json
+    from pathlib import Path
+
+    from engine.seeding import seed_station
+
+    raw = json.loads((Path(__file__).parent.parent / "stations" / "starter.json").read_text())
+    raw.setdefault("rules", {}).update(extra_rules or {})
+    path = tmp_path / "starter.json"
+    path.write_text(json.dumps(raw))
+    with Session() as db:
+        seed_station(db, path)
+        db.commit()
+
+
+def _rules(client) -> dict:
+    return {
+        r["key"]: r for r in client.get("/api/stations/starter/rules").json()["rules"]
     }
-    assert by_key["cross_pool_dedup_sources"]["is_override"] is True
+
+
+def test_template_declared_rule_is_the_stations_default_not_an_override(api, tmp_path):
+    """A new install's starter: its template's value reads as its
+    default, so the panel says "default" and offers no Reset."""
+    client, Session = api
+    _seed_starter(Session, tmp_path)
+    rule = _rules(client)["cross_pool_dedup_sources"]
+    assert rule["value"] == ["REFERENCE_ARCHIVE"]
+    assert rule["default_value"] == ["REFERENCE_ARCHIVE"]
+    assert rule["is_override"] is False
+
+
+def test_clear_override_puts_the_templates_value_back(api, tmp_path):
+    """The bug: Clear override dropped the starter's
+    ["REFERENCE_ARCHIVE"] for the registry's [], and nothing in the app
+    brought it back. Now it's written straight back, where generation
+    reads it."""
+    from engine.rules import get_rule_list_value
+
+    client, Session = api
+    _seed_starter(Session, tmp_path)
+    r = client.put(
+        "/api/stations/starter/rules/cross_pool_dedup_sources", json={"value": []},
+    )
+    assert r.json()["is_override"] is True
+
+    assert client.delete(
+        "/api/stations/starter/rules/cross_pool_dedup_sources",
+    ).status_code == 204
+    rule = _rules(client)["cross_pool_dedup_sources"]
+    assert rule["value"] == ["REFERENCE_ARCHIVE"]
+    assert rule["is_override"] is False
+    with Session() as db:
+        st = db.query(Station).filter(Station.slug == "starter").one()
+        assert get_rule_list_value(
+            db, station_id=st.id, key="cross_pool_dedup_sources",
+        ) == ["REFERENCE_ARCHIVE"]
+
+
+def test_a_value_lost_to_the_old_clear_override_shows_and_can_be_reset(api, tmp_path):
+    """A station already hit by the bug has no row: it shows the
+    registry's [] against its own default, as an override, so Reset
+    is offered and puts the template's value back."""
+    client, Session = api
+    _seed_starter(Session, tmp_path)
+    with Session() as db:
+        db.query(Rule).filter_by(key="cross_pool_dedup_sources").delete()
+        db.commit()
+    rule = _rules(client)["cross_pool_dedup_sources"]
+    assert rule["value"] == []
+    assert rule["default_value"] == ["REFERENCE_ARCHIVE"]
+    assert rule["is_override"] is True
+
+    client.delete("/api/stations/starter/rules/cross_pool_dedup_sources")
+    assert _rules(client)["cross_pool_dedup_sources"]["value"] == ["REFERENCE_ARCHIVE"]
+
+
+def test_clear_override_puts_a_templates_int_value_back(api, tmp_path):
+    from engine.rules import get_rule_value
+
+    client, Session = api
+    _seed_starter(Session, tmp_path, extra_rules={"artist_dedup_window": 25})
+    assert _rules(client)["artist_dedup_window"]["default_value"] == 25
+    assert _rules(client)["artist_dedup_window"]["is_override"] is False
+
+    client.put("/api/stations/starter/rules/artist_dedup_window", json={"value": 40})
+    assert _rules(client)["artist_dedup_window"]["is_override"] is True
+    client.delete("/api/stations/starter/rules/artist_dedup_window")
+    rule = _rules(client)["artist_dedup_window"]
+    assert (rule["value"], rule["is_override"]) == (25, False)
+    with Session() as db:
+        st = db.query(Station).filter(Station.slug == "starter").one()
+        assert get_rule_value(db, station_id=st.id, key="artist_dedup_window") == 25
+
+
+def test_clear_override_without_a_template_value_still_goes_to_the_registry(api, tmp_path):
+    """Undeclared keys are as before: the row goes, the registry
+    default stands."""
+    client, Session = api
+    _seed_starter(Session, tmp_path)
+    client.put("/api/stations/starter/rules/mix_exclusion_weeks", json={"value": 3})
+    client.delete("/api/stations/starter/rules/mix_exclusion_weeks")
+    rule = _rules(client)["mix_exclusion_weeks"]
+    assert (rule["value"], rule["default_value"], rule["is_override"]) == (20, 20, False)
+    with Session() as db:
+        assert db.query(Rule).filter_by(key="mix_exclusion_weeks").first() is None
+
+
+def test_station_rule_defaults_of_an_unreadable_template_is_empty():
+    from engine.seeding import station_rule_defaults
+
+    assert station_rule_defaults("x", {}) == {}
+    assert station_rule_defaults("x", {"station": "x", "rules": "nope"}) == {}
