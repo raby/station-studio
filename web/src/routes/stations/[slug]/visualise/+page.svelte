@@ -20,6 +20,7 @@
   import { editsFromPanel, type PanelEvent } from '$lib/panelEdits';
   import { queuedChanges, ruleDefaultsFrom, type RuleDefaults } from '$lib/songList';
   import { confirmUndo, movesRules } from '$lib/undoQueued';
+  import { confirmDialog } from '$lib/confirm';
   import { page } from '$app/stores';
   import {
     ApiError,
@@ -39,6 +40,7 @@
     patchBlock,
     patchMacro,
     renameSection,
+    rebuildSidecar,
     reorderSections,
     retypeBlock,
     SidecarBatchFailure,
@@ -1972,6 +1974,36 @@
     );
   }
 
+  /** "Rebuild the layout" (the warning banner and the empty canvas):
+   *  the layout made again from the station's rules, in place of the
+   *  `make derive-sidecar` command these places used to point at. It
+   *  replaces named and grouped sections, so it asks first; staged
+   *  edits were made against the old layout, so they go too (and the
+   *  question says so). */
+  async function handleRebuildLayout() {
+    // A Save of staged edits is in flight: let it land first.
+    if (saving) return;
+    const staged = hasStagedEdits
+      ? ` Your ${opLog.length} unsaved edit${opLog.length === 1 ? '' : 's'} will be discarded too.`
+      : '';
+    const ok = await confirmDialog({
+      title: 'Rebuild the layout?',
+      body:
+        "The layout is made again from this station's rules. Sections " +
+        "you've named, grouped or moved will be replaced." + staged,
+      confirmLabel: 'Rebuild',
+      danger: true,
+    });
+    if (!ok) return;
+    // Discarding refetches the layout (and its token); if that fails,
+    // its error shows and nothing is rebuilt.
+    if (hasStagedEdits && !(await _resetStagedState())) return;
+    await withSaveLifecycle(
+      () => rebuildSidecar(slug, updatedAt),
+      'rebuilt',
+    );
+  }
+
   async function handleSectionsReorder(
     e: CustomEvent<{ layoutOrder: string[] }>,
   ) {
@@ -2129,12 +2161,23 @@
         figuring out what broke.
       -->
       <div class="sidecar-warning" data-testid="sidecar-warning">
-        <strong>Warning:</strong> the committed
-        <code>stations/{slug}.editor.json</code> is malformed —
-        falling back to the trivial view.
-        <pre>{sidecarError}</pre>
-        Fix the file or regenerate it with
-        <code>make derive-sidecar STATION={slug}</code>.
+        <p>
+          <strong>This station's saved layout couldn't be used</strong>, so
+          a stand-in is showing. Rebuild the layout to make a fresh one from
+          the station's rules, then rename or regroup its sections as you
+          like.
+        </p>
+        <button
+          type="button"
+          data-testid="rebuild-layout"
+          on:click={handleRebuildLayout}
+        >
+          Rebuild the layout
+        </button>
+        <details>
+          <summary>What's wrong with it</summary>
+          <pre>{sidecarError}</pre>
+        </details>
       </div>
     {/if}
 
@@ -2319,6 +2362,7 @@
           on:sectionsReorder={handleSectionsReorder}
           on:blockMove={handleBlockMove}
           on:structuralEdit={handleStructuralEdit}
+          on:rebuildLayout={handleRebuildLayout}
           on:detailOpen={(e) => (detailPanelOpen = e.detail.open)}
         />
       </div>
@@ -2620,6 +2664,12 @@
     margin: 1rem 0;
     font-size: 0.9rem;
   }
+  .sidecar-warning p {
+    margin: 0 0 0.6rem;
+  }
+  .sidecar-warning details {
+    margin-top: 0.6rem;
+  }
   .sidecar-warning pre {
     background: var(--panel);
     padding: 0.4rem 0.6rem;
@@ -2630,11 +2680,6 @@
   }
   .error {
     color: var(--danger);
-  }
-  code {
-    background: var(--panel-2);
-    padding: 0.1em 0.3em;
-    border-radius: 3px;
   }
 
   /* §16.2.6.t3 — chip jump-flash. The class is added by

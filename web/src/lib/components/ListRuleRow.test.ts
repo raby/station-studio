@@ -229,6 +229,10 @@ describe('<ListRuleRow>', () => {
     );
     await screen.findByTestId('list-rule-row');
     expect(screen.getByTestId('list-rule-reset')).toBeInTheDocument();
+    // Its hint promises only what happens: no command, no restart.
+    const hint = document.getElementById('list-rule-reset-hint-' + listRule().key);
+    expect(hint).toHaveTextContent(/default/);
+    expect(hint).not.toHaveTextContent(/make |seed|restart|starts/i);
   });
 
   it('Reset DELETEs + emits updated with default_value + is_override=false', async () => {

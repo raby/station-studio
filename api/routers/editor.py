@@ -63,6 +63,7 @@ from api.schemas import (
     SectionCreateRequest,
     SectionRenameRequest,
     SectionsOrderRequest,
+    SidecarRebuildRequest,
     SidecarBatchErrorResponse,
     SidecarBatchRequest,
     SidecarMutationResponse,
@@ -71,6 +72,7 @@ from api.schemas import (
 from fastapi.responses import JSONResponse
 from engine.editor_metadata import (
     EditorMetadataError,
+    derive_sidecar,
     MacroResolutionError,
     UNSORTED_SECTION_ID,
     ensure_unsorted_section,
@@ -837,6 +839,39 @@ def delete_section(
     # pre-deepcopy block-dict separation the c1 review #10 fix
     # established).
     sidecar = _apply_section_delete(template, sidecar, section_id)
+    return _finish_sidecar_mutation(station, sidecar, db)
+
+
+@router.post(
+    "/api/stations/{slug}/sidecar/rebuild",
+    response_model=SidecarMutationResponse,
+)
+def rebuild_sidecar(
+    slug: str,
+    payload: SidecarRebuildRequest,
+    db: Session = Depends(get_db),
+):
+    """The visualiser's layout made again from the station's rules: the
+    way out when the saved layout no longer fits them (its warning) or
+    has no sections, from the page instead of `make derive-sidecar`.
+
+    Sections you named or grouped are replaced by the derived ones (the
+    page asks first). Flat-slot stations get derive_sidecar's sections;
+    others, which derive_sidecar doesn't cover, the plain one-section
+    layout every station falls back to.
+    """
+    station = db.query(Station).filter(Station.slug == slug).first()
+    if station is None:
+        raise HTTPException(404, f"station '{slug}' not found")
+    _check_optimistic_token(station, payload.expected_updated_at)
+    template = copy.deepcopy(station.template)
+    try:
+        sidecar = derive_sidecar(template)
+    except (KeyError, ValueError, TemplateError):
+        # What populate_db_sidecars catches too: row_template stations
+        # (EditorMetadataError, a ValueError) and templates the
+        # heuristic can't read. Either way the one-section layout.
+        sidecar = synthesize_trivial_sidecar(template)
     return _finish_sidecar_mutation(station, sidecar, db)
 
 

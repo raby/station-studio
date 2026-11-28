@@ -786,8 +786,8 @@
 
     {#if playlists.length === 0}
       <p class="hint">
-        None generated yet — click the button above, or run
-        <code>python -m scripts.bootstrap_classics</code> from the repo root.
+        None generated yet. <strong>Generate week 1</strong> above makes the
+        first one.
       </p>
     {:else}
       <!-- data-testid set so e2e can disambiguate from §16.19 pools
@@ -1240,11 +1240,6 @@
   .hint {
     color: var(--muted);
     font-size: 0.9rem;
-  }
-  code {
-    background: var(--panel-2);
-    padding: 0.1em 0.3em;
-    border-radius: 3px;
   }
 
   /* ---- §16.20 c2: mobile / narrow-viewport ---------------------- */

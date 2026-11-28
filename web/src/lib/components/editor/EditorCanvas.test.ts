@@ -125,6 +125,20 @@ describe('<EditorCanvas>', () => {
     expect(screen.queryByTestId('section')).toBeNull();
   });
 
+  it('the empty canvas offers Rebuild the layout, not a command to type', async () => {
+    const template = makeTemplate(0);
+    const sidecar = makeSidecar({ sections: [], layout_order: [] });
+    const asked: unknown[] = [];
+    render(EditorCanvas, {
+      props: { template, sidecar },
+      events: { rebuildLayout: (e: CustomEvent) => asked.push(e.detail) },
+    });
+    const empty = screen.getByTestId('empty-canvas');
+    expect(empty).not.toHaveTextContent(/make derive|derive-sidecar|editor\.json/);
+    await fireEvent.click(screen.getByTestId('rebuild-layout-empty'));
+    expect(asked).toHaveLength(1);
+  });
+
   it('renders the synthesized trivial sidecar (one All-slots section)', () => {
     // Smoke test: what the c1 endpoint sends when no
     // stations/{slug}.editor.json exists.

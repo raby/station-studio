@@ -6,6 +6,23 @@ this project uses semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- A welcome on the Stations page until a station has its first week:
+  three steps (import your music, pick a station, generate its weeks),
+  with buttons to Source pools and New station.
+- Rebuild the layout, in the visualiser: makes a station's layout again
+  from its rules, after asking. It's offered when the saved layout
+  couldn't be used, and when a layout has no sections.
+
+### Changed
+
+- No page asks you to type a command any more. Where one did, there's a
+  button or plain words instead: Try again when Station Studio isn't
+  answering, the welcome when there are no stations, Generate week 1 on
+  a new station, and Rebuild the layout in the visualiser. Clearing a
+  rule's value says plainly that it goes back to the default.
+
 ## [1.25.0] - 2026-11-27
 
 Every release now says what it changes: on GitHub, and from the next

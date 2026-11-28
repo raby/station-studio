@@ -25,7 +25,7 @@ from sqlalchemy.orm import sessionmaker
 
 from api.deps import get_db, get_stations_dir
 from api.main import app
-from engine.editor_metadata import EditorMetadataError
+from engine.editor_metadata import EditorMetadataError, derive_sidecar
 from engine.database import make_engine, make_sessionmaker
 from engine.models import Base, Station
 from engine.seeding import populate_db_sidecars
@@ -1807,6 +1807,127 @@ def test_reorder_sections_rejects_duplicates(editor_api):
         "expected_updated_at": _token(client, "comp"),
     })
     assert r.status_code == 400
+
+
+# ---- POST /sidecar/rebuild ------------------------------------------------
+# The visualiser's "Rebuild the layout" button, in place of
+# `make derive-sidecar` on the command line.
+
+
+def test_rebuild_sidecar_replaces_layout_with_derived_one(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.post("/api/stations/comp/sidecar/rebuild", json={
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 200, r.json()
+    body = r.json()
+    # The hand-made "Lead" / "Tail" sections are gone: what's left is
+    # what derive_sidecar makes from the six slots.
+    ids = [s["id"] for s in body["sidecar"]["sections"]]
+    assert "lead" not in ids and "tail" not in ids
+    assert body["sidecar"] == derive_sidecar(body["template"])
+    assert body["updated_at"] != ""
+
+
+def test_rebuild_sidecar_unblocks_a_layout_that_no_longer_fits(editor_api):
+    """A saved layout pointing at a slot the rules don't have: GET shows
+    the warning, every other edit is refused, and rebuild is the way
+    out — after it the warning is gone and edits work again."""
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    # The rules lose three slots the saved layout still points at.
+    with Session() as db:
+        st = db.query(Station).filter(Station.slug == "comp").one()
+        template = json.loads(json.dumps(st.template))
+        template["layout"]["flat_slots"] = template["layout"]["flat_slots"][:3]
+        st.template = template
+        db.commit()
+
+    before = client.get("/api/stations/comp/sidecar").json()
+    assert before["sidecar_error"]
+    blocked = client.put("/api/stations/comp/sections/order", json={
+        "layout_order": ["tail", "lead"],
+        "expected_updated_at": before["updated_at"],
+    })
+    assert blocked.status_code == 400
+
+    r = client.post("/api/stations/comp/sidecar/rebuild", json={
+        "expected_updated_at": before["updated_at"],
+    })
+    assert r.status_code == 200, r.json()
+    after = client.get("/api/stations/comp/sidecar").json()
+    assert after["sidecar_error"] is None
+    order = after["sidecar"]["layout_order"]
+    ok = client.put("/api/stations/comp/sections/order", json={
+        "layout_order": list(reversed(order)),
+        "expected_updated_at": after["updated_at"],
+    })
+    assert ok.status_code == 200, ok.json()
+
+
+def test_rebuild_sidecar_clears_a_saved_warning(editor_api):
+    """A broken file read at start-up leaves its reason on the station;
+    rebuilding clears it so the banner goes."""
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    with Session() as db:
+        st = db.query(Station).filter(Station.slug == "comp").one()
+        st.sidecar_error = "sidecar file at x failed validation"
+        db.commit()
+    token = _token(client, "comp")
+    assert client.get("/api/stations/comp/sidecar").json()["sidecar_error"]
+    r = client.post("/api/stations/comp/sidecar/rebuild", json={
+        "expected_updated_at": token,
+    })
+    assert r.status_code == 200
+    assert client.get("/api/stations/comp/sidecar").json()["sidecar_error"] is None
+
+
+def test_rebuild_sidecar_row_template_falls_back_to_one_section(editor_api):
+    """derive_sidecar doesn't do row_template stations; they get the
+    plain layout every station falls back to rather than an error."""
+    client, Session, _dir = editor_api
+    _row_template_station(Session, "rt")
+    r = client.post("/api/stations/rt/sidecar/rebuild", json={
+        "expected_updated_at": _token(client, "rt"),
+    })
+    assert r.status_code == 200, r.json()
+    assert len(r.json()["sidecar"]["sections"]) == 1
+
+
+@pytest.mark.parametrize("exc", [KeyError("layout"), ValueError("bad"), EditorMetadataError("no")])
+def test_rebuild_sidecar_falls_back_when_derive_fails(editor_api, monkeypatch, exc):
+    """Whatever derive_sidecar can't do (the same errors start-up's
+    populate_db_sidecars catches) gives the one-section layout, not a 500."""
+    import api.routers.editor as editor_router
+
+    def boom(_template):
+        raise exc
+
+    monkeypatch.setattr(editor_router, "derive_sidecar", boom)
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.post("/api/stations/comp/sidecar/rebuild", json={
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 200, r.json()
+    assert len(r.json()["sidecar"]["sections"]) == 1
+
+
+def test_rebuild_sidecar_409_on_stale_token(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.post("/api/stations/comp/sidecar/rebuild", json={
+        "expected_updated_at": "2000-01-01T00:00:00+00:00",
+    })
+    assert r.status_code == 409
+
+
+def test_rebuild_sidecar_404_for_unknown_station(editor_api):
+    client, _Session, _dir = editor_api
+    r = client.post("/api/stations/ghost/sidecar/rebuild", json={})
+    assert r.status_code == 404
 
 
 # ---- PATCH /blocks/move ---------------------------------------------------

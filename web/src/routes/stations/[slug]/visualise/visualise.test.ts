@@ -22,6 +22,7 @@ const {
   getStationSidecarMock,
   patchBlockMock,
   applyBatchMock,
+  rebuildSidecarMock,
   FakeSidecarBatchFailure,
   startPreviewJobMock,
   watchJobMock,
@@ -100,6 +101,7 @@ const {
       },
       updated_at: 'ts-after-save',
     })),
+    rebuildSidecarMock: vi.fn(),
     FakeApiError,
     FakeSidecarBatchFailure,
     pageStore,
@@ -137,6 +139,7 @@ vi.mock('$lib/api', async () => ({
   patchBlock: patchBlockMock,
   patchMacro: vi.fn(),
   renameSection: vi.fn(),
+  rebuildSidecar: rebuildSidecarMock,
   reorderSections: vi.fn(),
   retypeBlock: vi.fn(),
   structuralBlockEdit: vi.fn(),
@@ -261,6 +264,73 @@ describe('visualise +page.svelte', () => {
     // Canvas STILL renders alongside the warning (Decision E
     // "frontend never handles 'no sidecar'").
     expect(await screen.findByTestId('editor-canvas')).toBeInTheDocument();
+  });
+
+  it('the warning offers Rebuild the layout, which asks and then rebuilds', async () => {
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: 'slot_index 99 out of range',
+      updated_at: 'ts-before',
+    });
+    rebuildSidecarMock.mockReset();
+    rebuildSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      updated_at: 'ts-rebuilt',
+    });
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
+    render(Page);
+    const banner = await screen.findByTestId('sidecar-warning');
+    // Plain words, no command to type.
+    expect(banner).not.toHaveTextContent(/make derive|derive-sidecar|editor\.json/);
+    await fireEvent.click(within(banner).getByTestId('rebuild-layout'));
+    await waitFor(() => expect(rebuildSidecarMock).toHaveBeenCalledWith('viz-test', 'ts-before'));
+    expect(confirmDialogMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Rebuild the layout?' }),
+    );
+    // A rebuilt layout fits the rules, so the warning goes.
+    await waitFor(() => expect(screen.queryByTestId('sidecar-warning')).toBeNull());
+  });
+
+  it('Rebuild the layout does nothing when the question is cancelled', async () => {
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: 'slot_index 99 out of range',
+      updated_at: 'ts-before',
+    });
+    rebuildSidecarMock.mockReset();
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(false);
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('rebuild-layout'));
+    await waitFor(() => expect(confirmDialogMock).toHaveBeenCalled());
+    expect(rebuildSidecarMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId('sidecar-warning')).toBeInTheDocument();
+  });
+
+  it("the empty canvas's Rebuild the layout goes through the same question", async () => {
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+      updated_at: 'ts-before',
+    });
+    rebuildSidecarMock.mockReset();
+    rebuildSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      updated_at: 'ts-rebuilt',
+    });
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    fireEditorCanvasEvent('rebuildLayout', null);
+    await waitFor(() => expect(rebuildSidecarMock).toHaveBeenCalledWith('viz-test', 'ts-before'));
+    expect(confirmDialogMock).toHaveBeenCalledTimes(1);
   });
 
   it('renders the API error inline on station-not-found (404)', async () => {
@@ -667,6 +737,46 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
       });
     });
     expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
+  });
+
+  it('Rebuild the layout with staged edits: the question says they go, then they do', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('sectionsReorder', { layoutOrder: ['all-slots'] });
+    });
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
+    rebuildSidecarMock.mockReset();
+    rebuildSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(), sidecar: makeSidecar(), updated_at: 'ts-rebuilt',
+    });
+    const loadsBefore = getStationSidecarMock.mock.calls.length;
+    await act(async () => {
+      fireEditorCanvasEvent('rebuildLayout', null);
+    });
+    await waitFor(() => expect(rebuildSidecarMock).toHaveBeenCalledTimes(1));
+    expect(confirmDialogMock.mock.calls[0][0].body).toMatch(/1 unsaved edit will be discarded/);
+    // Discarded first (a fresh load), so the rebuild isn't racing them.
+    expect(getStationSidecarMock.mock.calls.length).toBeGreaterThan(loadsBefore);
+    expect(screen.queryByTestId('staged-save')).toBeNull();
+  });
+
+  it('Rebuild the layout stops if discarding the staged edits fails', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('sectionsReorder', { layoutOrder: ['all-slots'] });
+    });
+    await screen.findByTestId('staged-save');
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
+    rebuildSidecarMock.mockReset();
+    getStationSidecarMock.mockRejectedValueOnce(new Error('offline'));
+    await act(async () => {
+      fireEditorCanvasEvent('rebuildLayout', null);
+    });
+    await waitFor(() => expect(screen.getByText(/offline/)).toBeInTheDocument());
+    expect(rebuildSidecarMock).not.toHaveBeenCalled();
   });
 
   it('moveBlock — blockMove event → opLog grows (§16.2.6 c3d)', async () => {

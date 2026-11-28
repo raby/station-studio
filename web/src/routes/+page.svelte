@@ -20,7 +20,9 @@
   // list is short enough that a fresh default each visit is fine.
   let controls: StationListControls = { ...DEFAULT_CONTROLS };
 
-  onMount(async () => {
+  async function load() {
+    loading = true;
+    error = null;
     try {
       stations = await getStations();
     } catch (e) {
@@ -28,7 +30,14 @@
     } finally {
       loading = false;
     }
-  });
+  }
+
+  onMount(load);
+
+  // A first run, so the welcome shows: no station has a week yet. Not
+  // "no pools": the starter stations' sample pools are imported on the
+  // first start, so a new install always has some.
+  $: firstRun = !stations.some((s) => s.playlist_count > 0);
 
   $: cadences = availableCadences(stations);
   $: visible = filterSortStations(stations, controls);
@@ -67,17 +76,62 @@
     </div>
   </header>
 
+  {#if !loading && !error && firstRun}
+    <section class="welcome" aria-labelledby="welcome-title" data-testid="welcome">
+      <h2 id="welcome-title">Welcome to Station Studio</h2>
+      <p class="sub">Three steps to your first week of playlists.</p>
+      <ol class="steps">
+        <li>
+          <span class="step-n" aria-hidden="true">1</span>
+          <div>
+            <strong>Import your music.</strong> Export a playlist from Music
+            or iTunes as XML (File › Library › Export Playlist) and import
+            it as a source pool.
+          </div>
+          <a href="/sources" class="btn-primary" data-testid="welcome-import">Import music</a>
+        </li>
+        <li>
+          <span class="step-n" aria-hidden="true">2</span>
+          <div>
+            <strong>Pick a station.</strong>
+            {#if stations.length > 0}
+              Open one of the stations below, or make your own. The starter
+              stations come with sample music, so they work straight away.
+            {:else}
+              You have no stations yet: make one, with its name, the pools
+              it plays from, and its rules.
+            {/if}
+          </div>
+          <a href="/stations/new" class="btn" data-testid="welcome-new-station">New station</a>
+        </li>
+        <li>
+          <span class="step-n" aria-hidden="true">3</span>
+          <div>
+            <strong>Generate its weeks.</strong> On the station's page,
+            Generate week 1 makes its first playlist.
+          </div>
+        </li>
+      </ol>
+      <p class="more"><a href="/help#help-start">More in Help</a></p>
+    </section>
+  {/if}
+
   {#if loading}
     <p>Loading…</p>
   {:else if error}
-    <p class="error">Could not reach backend: {error}</p>
-    <p>Start it with <code>python run.py</code> from the repo root.</p>
+    <div class="notice" role="alert" data-testid="backend-down">
+      <p><strong>Station Studio isn't answering.</strong> If you closed it,
+      open it again, then try again.</p>
+      <button type="button" class="btn" data-testid="try-again" on:click={load}>
+        Try again
+      </button>
+      <details>
+        <summary>Details</summary>
+        <p class="error">{error}</p>
+      </details>
+    </div>
   {:else if stations.length === 0}
-    <p>
-      No stations yet. Bootstrap Rebirth Classics with
-      <code>python -m scripts.bootstrap_classics</code>, or use
-      <a href="/stations/new">New station</a> above.
-    </p>
+    <!-- The welcome above says how to make one. -->
   {:else}
     <!-- §16.12 controls: search + filter chips + sort. -->
     <div class="controls" data-testid="list-controls">
@@ -396,5 +450,74 @@
   }
   .error {
     color: var(--danger);
+  }
+  .notice,
+  .welcome {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin: 0 0 18px;
+    padding: 16px 18px;
+  }
+  .notice {
+    border-color: var(--warn);
+  }
+  .notice p {
+    margin: 0 0 10px;
+  }
+  .notice details {
+    margin-top: 10px;
+  }
+  .notice details p {
+    font-size: 13px;
+    margin: 6px 0 0;
+  }
+  .welcome h2 {
+    font-size: 18px;
+    margin: 0 0 2px;
+  }
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    list-style: none;
+    margin: 14px 0 0;
+    padding: 0;
+  }
+  .steps li {
+    align-items: center;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: 28px 1fr auto;
+  }
+  .step-n {
+    align-items: center;
+    background: var(--accent-soft);
+    border-radius: 50%;
+    color: var(--accent);
+    display: inline-flex;
+    font-weight: 650;
+    height: 28px;
+    justify-content: center;
+    width: 28px;
+  }
+  .steps .btn,
+  .steps .btn-primary {
+    justify-self: end;
+    text-decoration: none;
+  }
+  .more {
+    font-size: 13px;
+    margin: 12px 0 0;
+  }
+  @media (max-width: 560px) {
+    .steps li {
+      grid-template-columns: 28px 1fr;
+    }
+    .steps .btn,
+    .steps .btn-primary {
+      grid-column: 2;
+      justify-self: start;
+    }
   }
 </style>

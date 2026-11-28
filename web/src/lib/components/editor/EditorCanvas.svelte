@@ -89,6 +89,9 @@
       targetIndex: number | null;
     };
     structuralEdit: { edit: StructuralBlockEdit };
+    /** The empty canvas's "Rebuild the layout" button: the page asks
+     *  first, then makes the layout again from the station's rules. */
+    rebuildLayout: null;
     // §16.2.6 c3e c2 — D2(b) DetailPanel ↔ TracePane mutual-
     // exclusivity. EditorCanvas owns the `selected` state (and
     // therefore knows when DetailPanel is open); the route listens
@@ -469,11 +472,19 @@
   {/each}
 
   {#if orderedSections.length === 0}
-    <p class="empty" data-testid="empty-canvas">
-      No sections to render. (Sidecar's <code>layout_order</code> is
-      empty — author entries in <code>stations/{template.station}.editor.json</code>
-      or regenerate with <code>make derive-sidecar STATION={template.station}</code>.)
-    </p>
+    <div class="empty" data-testid="empty-canvas">
+      <p>
+        This layout has no sections yet. Add one below, or rebuild the
+        layout to make sections from the station's rules.
+      </p>
+      <button
+        type="button"
+        data-testid="rebuild-layout-empty"
+        on:click={() => dispatch('rebuildLayout', null)}
+      >
+        Rebuild the layout
+      </button>
+    </div>
   {/if}
 
   <!-- §16.2.5 c2 — Add Section affordance at the bottom of the canvas. -->
@@ -546,12 +557,9 @@
   .empty {
     color: var(--text-muted, #666);
     font-size: 0.9rem;
-    font-style: italic;
   }
-  code {
-    background: var(--panel-2);
-    padding: 0.1em 0.3em;
-    border-radius: 3px;
+  .empty p {
+    margin: 0 0 0.5rem;
   }
   /* §16.2.5 c2 — Add Section affordance. */
   .add-section {

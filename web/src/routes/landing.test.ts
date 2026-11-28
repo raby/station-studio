@@ -46,22 +46,66 @@ describe('landing +page.svelte', () => {
     await act();
   });
 
-  it('renders the ApiError message when the backend is unreachable', async () => {
+  it('says plainly when the server is not answering, with Try again', async () => {
     getStationsMock.mockRejectedValueOnce(
       new FakeApiError(503, '503 Service Unavailable: backend down'),
     );
     render(Page);
-    expect(
-      await screen.findByText(/could not reach backend.*backend down/i),
-    ).toBeInTheDocument();
-    // Also renders the recovery hint.
-    expect(screen.getByText(/python run\.py/i)).toBeInTheDocument();
+    const notice = await screen.findByTestId('backend-down');
+    expect(notice).toHaveTextContent(/isn't answering/i);
+    // The technical reason stays, folded away under Details.
+    expect(notice).toHaveTextContent(/backend down/);
+    // No command to type.
+    expect(notice).not.toHaveTextContent(/python|run\.py/i);
+
+    getStationsMock.mockResolvedValueOnce([]);
+    await fireEvent.click(screen.getByTestId('try-again'));
+    expect(await screen.findByTestId('welcome')).toBeInTheDocument();
+    expect(screen.queryByTestId('backend-down')).toBeNull();
+    expect(getStationsMock).toHaveBeenCalledTimes(2);
   });
 
-  it('renders the empty-state copy when zero stations come back', async () => {
+  const station = (slug: string, playlistCount: number) => ({
+    id: 1, slug, name: slug, cadence: 'weekly', playlist_count: playlistCount,
+    last_generated_week: playlistCount ? 1 : null,
+    last_generated_at: playlistCount ? '2026-05-01T00:00:00Z' : null,
+    updated_at: '2026-05-01T00:00:00Z',
+  });
+
+  it('shows the first-run welcome until a week is generated', async () => {
+    // A new install: stations and their sample pools, nothing generated.
+    getStationsMock.mockResolvedValueOnce([station('starter', 0)]);
+    render(Page);
+    const welcome = await screen.findByTestId('welcome');
+    expect(screen.getByTestId('welcome-import')).toHaveAttribute('href', '/sources');
+    expect(screen.getByTestId('welcome-new-station')).toHaveAttribute('href', '/stations/new');
+    expect(welcome).toHaveTextContent(/stations below/i);
+    // The stations still list under it.
+    expect(screen.getByTestId('station-list')).toBeInTheDocument();
+  });
+
+  it('no welcome once any station has a week', async () => {
+    getStationsMock.mockResolvedValueOnce([station('a', 0), station('b', 2)]);
+    render(Page);
+    await screen.findByTestId('station-list');
+    expect(screen.queryByTestId('welcome')).toBeNull();
+  });
+
+  it('with no stations, the welcome says so and offers New station, no command to type', async () => {
     getStationsMock.mockResolvedValueOnce([]);
     render(Page);
-    expect(await screen.findByText(/no stations yet/i)).toBeInTheDocument();
+    const welcome = await screen.findByTestId('welcome');
+    expect(welcome).toHaveTextContent(/no stations yet/i);
+    expect(welcome).not.toHaveTextContent(/python|bootstrap/i);
+    expect(screen.getByTestId('welcome-new-station')).toHaveAttribute('href', '/stations/new');
+  });
+
+  it('no welcome while loading or when the server is not answering', async () => {
+    getStationsMock.mockRejectedValueOnce(new FakeApiError(503, 'down'));
+    render(Page);
+    expect(screen.queryByTestId('welcome')).toBeNull();
+    await screen.findByTestId('backend-down');
+    expect(screen.queryByTestId('welcome')).toBeNull();
   });
 
   it('lists stations as links when the fetch returns rows', async () => {
@@ -176,7 +220,7 @@ describe('landing +page.svelte', () => {
     // The component stringifies non-ApiError via String(e), which yields
     // "TypeError: network fetch failed" — proves the instanceof branch.
     expect(
-      await screen.findByText(/could not reach backend.*network fetch failed/i),
+      await screen.findByText('TypeError: network fetch failed'),
     ).toBeInTheDocument();
   });
 });
