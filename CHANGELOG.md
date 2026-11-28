@@ -25,9 +25,14 @@ this project uses semantic versioning.
 
 ### Fixed
 
-- `station-studio generate` on the command line now applies a station's
-  cross-pool dedup, as the app does. It used to ignore it, so a station
-  with the rule (the starter) could generate a different week there.
+- `station-studio generate` on the command line now generates as the
+  app does:
+  - Without `--seed`, it works for stations with randomness on (the
+    starter, Stateful Starter and Rebirth Radio): a new week gets a new
+    seed, and regenerating a week reuses its own. It used to stop with
+    "rng='on' template requires a seed". It prints the seed it used.
+  - It applies a station's cross-pool dedup. It used to ignore it, so
+    the starter could get tracks its reference pool rules out.
 
 ## [1.25.0] - 2026-11-27
 

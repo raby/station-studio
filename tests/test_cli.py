@@ -414,6 +414,73 @@ def test_generate_subcommand_reports_a_missing_cross_pool_pool(
     assert "not imported" in result.output
 
 
+def _set_station_rng_on() -> None:
+    from engine.database import make_engine, make_sessionmaker
+    from engine.models import Station
+
+    engine = make_engine()
+    try:
+        with make_sessionmaker(engine)() as db:
+            st = db.query(Station).filter(Station.slug == "cli-minimal").one()
+            st.template = {**st.template, "rng": "on"}
+            db.commit()
+    finally:
+        engine.dispose()
+
+
+def _week_seed(home: Path, week: int):
+    import sqlite3
+
+    db = sqlite3.connect(home / "station_studio.db")
+    try:
+        row = db.execute(
+            "SELECT v.seed FROM playlist p JOIN playlist_version v "
+            "ON v.playlist_id = p.id WHERE p.week = ? "
+            "ORDER BY v.version_no DESC LIMIT 1", (week,),
+        ).fetchone()
+        return None if row is None else row[0]
+    finally:
+        db.close()
+
+
+def test_generate_subcommand_picks_a_seed_for_a_new_rng_on_week(
+    runner: CliRunner, cli_home_with_station_and_pool: Path,
+) -> None:
+    """Three of the four bundled stations have rng on, and the engine
+    won't run one without a seed. Without --seed the CLI now picks one
+    for a new week, as the app does, and says which."""
+    _set_station_rng_on()
+    result = runner.invoke(main, ["generate", "cli-minimal", "--week", "1"])
+    assert result.exit_code == 0, result.output
+    seed = _week_seed(cli_home_with_station_and_pool, 1)
+    assert isinstance(seed, int)
+    assert f"seed {seed}" in result.output
+
+
+def test_generate_subcommand_regenerates_an_rng_on_week_with_its_seed(
+    runner: CliRunner, cli_home_with_station_and_pool: Path,
+) -> None:
+    """Regenerating without --seed reuses the week's own seed, as the
+    app does, so unchanged rules give the same week."""
+    _set_station_rng_on()
+    first = runner.invoke(main, ["generate", "cli-minimal", "--week", "1", "--seed", "4242"])
+    assert first.exit_code == 0, first.output
+    again = runner.invoke(main, ["generate", "cli-minimal", "--week", "1"])
+    assert again.exit_code == 0, again.output
+    assert _week_seed(cli_home_with_station_and_pool, 1) == 4242
+    assert "seed 4242" in again.output
+
+
+def test_generate_subcommand_seed_flag_still_wins(
+    runner: CliRunner, cli_home_with_station_and_pool: Path,
+) -> None:
+    _set_station_rng_on()
+    runner.invoke(main, ["generate", "cli-minimal", "--week", "1", "--seed", "1"])
+    r = runner.invoke(main, ["generate", "cli-minimal", "--week", "1", "--seed", "2"])
+    assert r.exit_code == 0, r.output
+    assert _week_seed(cli_home_with_station_and_pool, 1) == 2
+
+
 def test_generate_subcommand_keeps_just_this_week_changes(
     runner: CliRunner, cli_home_with_station_and_pool: Path
 ) -> None:
