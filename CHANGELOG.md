@@ -25,12 +25,14 @@ this project uses semantic versioning.
 
 ### Fixed
 
-- Resetting a rule that a station's template sets (the starter's
-  "Cross pool dedup sources", say) now puts the template's value back.
-  Before, it went to Station Studio's own default and the template's
-  value never came back. A rule already lost that way shows as
-  overridden, so Reset to default restores it. A template's own values
-  now read as the station's default rather than as overridden.
+- A rule that a station's template sets (the starter's "Cross pool
+  dedup sources", say) keeps the template's value:
+  - Reset to default puts it back. Before, Reset went to Station
+    Studio's own default and the template's value never came back.
+  - A value already lost that way is back by itself.
+  - A station made with Fork station keeps it too; before, forks
+    ignored it.
+  - It now shows as the station's default rather than as overridden.
 
 ## [1.25.0] - 2026-11-27
 

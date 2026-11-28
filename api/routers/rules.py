@@ -34,7 +34,6 @@ from sqlalchemy.orm import Session
 from api.deps import get_db
 from api.schemas import RuleListResponse, RuleOut, RuleValueIn
 from engine.models import Station
-from engine.seeding import station_rule_defaults
 from engine.rules import (
     InvalidRuleValueError, RULE_DEFAULTS, RULE_LIST_DEFAULTS,
     UnknownRuleError,
@@ -55,18 +54,6 @@ def _resolve_station(db: Session, slug: str) -> Station:
     return st
 
 
-def _station_defaults(station: Station) -> dict:
-    """The defaults this station's template declares (see
-    `engine.seeding.station_rule_defaults`)."""
-    return station_rule_defaults(station.slug, station.template or {})
-
-
-def _rules_out(db: Session, station: Station) -> list[dict]:
-    return get_all_rules(
-        db, station_id=station.id, station_defaults=_station_defaults(station),
-    )
-
-
 @router.get(
     "/api/stations/{slug}/rules",
     response_model=RuleListResponse,
@@ -78,7 +65,7 @@ def list_rules(slug: str, db: Session = Depends(get_db)) -> RuleListResponse:
     render deterministically.
     """
     station = _resolve_station(db, slug)
-    rows = _rules_out(db, station)
+    rows = get_all_rules(db, station_id=station.id)
     return RuleListResponse(rules=[RuleOut(**r) for r in rows])
 
 
@@ -141,7 +128,7 @@ def set_rule(
     db.commit()
     # Re-read so the response reflects the canonical post-write
     # state (and dispatches via get_all_rules' kind-aware emit).
-    rows = _rules_out(db, station)
+    rows = get_all_rules(db, station_id=station.id)
     by_key = {r["key"]: r for r in rows}
     return RuleOut(**by_key[key])
 
@@ -153,39 +140,26 @@ def set_rule(
 def delete_rule(slug: str, key: str, db: Session = Depends(get_db)):
     """Clear the override for `key`, reverting to the station's default.
 
-    The station's default is its template's value for `key` when the
-    template declares one (the starter's `cross_pool_dedup_sources`,
-    say), else the registry's. A declared value is written straight
-    back as the station's rule: generation reads only stored rules and
-    the registry, and start-up only re-seeds an empty database, so
-    without this the template's value would be gone for good.
+    With no stored value, a rule reads as the station's template's value
+    when it declares one (the starter's `cross_pool_dedup_sources`,
+    say), else the registry's: see `engine.rules.station_declared_rules`.
 
     §16.14.t10 — dispatches by kind:
 
-      * RULE_DEFAULTS key → clear_rule / set_rule_value (int accessor).
-      * RULE_LIST_DEFAULTS key → clear_rule_list / set_rule_list_value
-        (list accessor).
+      * RULE_DEFAULTS key → clear_rule (int accessor).
+      * RULE_LIST_DEFAULTS key → clear_rule_list (list accessor).
 
     Idempotent: 204 even if no override existed. 400 on unknown key.
     """
     station = _resolve_station(db, slug)
-    declared = _station_defaults(station)
     if key in RULE_DEFAULTS:
         try:
             clear_rule(db, station_id=station.id, key=key)
-            if key in declared:
-                set_rule_value(
-                    db, station_id=station.id, key=key, value=declared[key],
-                )
         except UnknownRuleError as e:
             raise HTTPException(400, str(e))
     elif key in RULE_LIST_DEFAULTS:
         try:
             clear_rule_list(db, station_id=station.id, key=key)
-            if key in declared:
-                set_rule_list_value(
-                    db, station_id=station.id, key=key, value=declared[key],
-                )
         except UnknownRuleError as e:
             raise HTTPException(400, str(e))
     else:

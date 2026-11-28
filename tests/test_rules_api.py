@@ -567,8 +567,8 @@ def test_template_declared_rule_is_the_stations_default_not_an_override(api, tmp
 def test_clear_override_puts_the_templates_value_back(api, tmp_path):
     """The bug: Clear override dropped the starter's
     ["REFERENCE_ARCHIVE"] for the registry's [], and nothing in the app
-    brought it back. Now it's written straight back, where generation
-    reads it."""
+    brought it back. Now the row goes and the rule reads as the
+    template's value again, where generation reads it too."""
     from engine.rules import get_rule_list_value
 
     client, Session = api
@@ -591,22 +591,51 @@ def test_clear_override_puts_the_templates_value_back(api, tmp_path):
         ) == ["REFERENCE_ARCHIVE"]
 
 
-def test_a_value_lost_to_the_old_clear_override_shows_and_can_be_reset(api, tmp_path):
-    """A station already hit by the bug has no row: it shows the
-    registry's [] against its own default, as an override, so Reset
-    is offered and puts the template's value back."""
+def test_a_value_lost_to_the_old_clear_override_comes_back_by_itself(api, tmp_path):
+    """A station already hit by the bug has no row. With no row a rule
+    reads as the template's value, so it's back without anyone
+    pressing Reset, for the panel and for generation alike."""
+    from engine.rules import get_rule_list_value
+
     client, Session = api
     _seed_starter(Session, tmp_path)
     with Session() as db:
         db.query(Rule).filter_by(key="cross_pool_dedup_sources").delete()
         db.commit()
     rule = _rules(client)["cross_pool_dedup_sources"]
-    assert rule["value"] == []
-    assert rule["default_value"] == ["REFERENCE_ARCHIVE"]
-    assert rule["is_override"] is True
+    assert rule["value"] == ["REFERENCE_ARCHIVE"]
+    assert rule["is_override"] is False
+    with Session() as db:
+        st = db.query(Station).filter(Station.slug == "starter").one()
+        assert get_rule_list_value(
+            db, station_id=st.id, key="cross_pool_dedup_sources",
+        ) == ["REFERENCE_ARCHIVE"]
 
-    client.delete("/api/stations/starter/rules/cross_pool_dedup_sources")
-    assert _rules(client)["cross_pool_dedup_sources"]["value"] == ["REFERENCE_ARCHIVE"]
+
+def test_a_fork_keeps_its_templates_rule_values(api, tmp_path):
+    """Forks copy the template but not Rule rows (§16.2.8 D1). The
+    template's values still hold for the fork: not an override, and
+    what generation reads."""
+    from engine.rules import get_rule_list_value
+
+    client, Session = api
+    _seed_starter(Session, tmp_path)
+    r = client.post("/api/stations/starter/fork", json={
+        "new_slug": "my-starter", "new_name": "My starter",
+    })
+    assert r.status_code == 201, r.json()
+    rules = {
+        x["key"]: x
+        for x in client.get("/api/stations/my-starter/rules").json()["rules"]
+    }
+    rule = rules["cross_pool_dedup_sources"]
+    assert (rule["value"], rule["is_override"]) == (["REFERENCE_ARCHIVE"], False)
+    with Session() as db:
+        st = db.query(Station).filter(Station.slug == "my-starter").one()
+        assert db.query(Rule).filter_by(station_id=st.id).count() == 0
+        assert get_rule_list_value(
+            db, station_id=st.id, key="cross_pool_dedup_sources",
+        ) == ["REFERENCE_ARCHIVE"]
 
 
 def test_clear_override_puts_a_templates_int_value_back(api, tmp_path):
@@ -640,8 +669,15 @@ def test_clear_override_without_a_template_value_still_goes_to_the_registry(api,
         assert db.query(Rule).filter_by(key="mix_exclusion_weeks").first() is None
 
 
-def test_station_rule_defaults_of_an_unreadable_template_is_empty():
+def test_station_rule_defaults_reads_the_rules_block():
     from engine.seeding import station_rule_defaults
 
+    assert station_rule_defaults("x", None) == {}
     assert station_rule_defaults("x", {}) == {}
-    assert station_rule_defaults("x", {"station": "x", "rules": "nope"}) == {}
+    # An unreadable rules block: registry defaults stand.
+    assert station_rule_defaults("x", {"rules": "nope"}) == {}
+    assert station_rule_defaults("x", {"rules": {"artist_dedup_window": -1}}) == {}
+    # The rest of the template needn't parse: only the block is read.
+    assert station_rule_defaults("x", {"rules": {
+        "artist_dedup_window": 5, "cross_pool_dedup_sources": ["A"],
+    }}) == {"artist_dedup_window": 5, "cross_pool_dedup_sources": ["A"]}

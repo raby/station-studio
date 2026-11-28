@@ -33,7 +33,6 @@ no rule row exists.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from collections.abc import Mapping
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -153,11 +152,38 @@ class InvalidRuleValueError(ValueError):
 # ---------------------------------------------------------------------------
 
 
+def station_declared_rules(db: Session, station_id: int) -> dict[str, Any]:
+    """The rule values a station's template declares in its `rules:`
+    block (`engine.seeding.station_rule_defaults`): what a rule reads
+    as when the station has no stored value for it, ahead of the
+    registry default.
+
+    So the template's value holds for a station with no Rule rows (a
+    fork, or one created through the API: only seeding writes rows
+    from a template), and comes back when a stored value is cleared.
+    `{}` for an unknown station.
+    """
+    # Imported here: engine.seeding and engine.template import this
+    # module at load time.
+    from engine.models import Station
+    from engine.seeding import station_rule_defaults
+
+    row = (
+        db.query(Station.slug, Station.template)
+        .filter(Station.id == station_id)
+        .first()
+    )
+    if row is None:
+        return {}
+    return station_rule_defaults(row.slug, row.template)
+
+
 def get_rule_value(db: Session, *, station_id: int, key: str) -> int:
     """Return the effective value for `key` on `station_id`.
 
-    Reads the per-station override if present; falls back to
-    RULE_DEFAULTS[key].value otherwise. Raises UnknownRuleError for
+    Reads the per-station override if present; else the station's
+    template's value if it declares one (`station_declared_rules`);
+    else RULE_DEFAULTS[key].value. Raises UnknownRuleError for
     keys not in the registry — callers must validate their inputs.
     All current rule values parse as int; future shape diversification
     will need a per-rule parser.
@@ -171,6 +197,9 @@ def get_rule_value(db: Session, *, station_id: int, key: str) -> int:
     )
     if row is not None:
         return int(row.value)
+    declared = station_declared_rules(db, station_id)
+    if key in declared:
+        return int(declared[key])
     return RULE_DEFAULTS[key].value
 
 
@@ -183,7 +212,7 @@ def validate_int_rule_value(key: str, value: Any) -> None:
 
     Pure function — no DB access; the accessors (``set_rule_value``)
     delegate to this before persisting. The parser
-    (``engine.template._parse_rules``) calls it too via the
+    (``engine.template.parse_rules``) calls it too via the
     cross-module dep; the API endpoint
     (``api/routers/rules.py``) calls it for PUT body validation.
     Single home for the validation contract avoids the three-way
@@ -288,7 +317,8 @@ def set_rule_value(db: Session, *, station_id: int, key: str, value: int) -> Non
 
 
 def clear_rule(db: Session, *, station_id: int, key: str) -> bool:
-    """Delete an override for `(station_id, key)`, reverting to default.
+    """Delete an override for `(station_id, key)`, reverting to the
+    station's default (its template's value, else the registry's).
 
     Returns True if a row was deleted, False if no override existed.
     Raises UnknownRuleError for invalid keys.
@@ -307,23 +337,15 @@ def clear_rule(db: Session, *, station_id: int, key: str) -> bool:
     return True
 
 
-def get_all_rules(
-    db: Session,
-    *,
-    station_id: int,
-    station_defaults: Mapping[str, int | list[str]] | None = None,
-) -> list[dict[str, Any]]:
+def get_all_rules(db: Session, *, station_id: int) -> list[dict[str, Any]]:
     """Return every rule (int + list) with its effective value, default, override.
 
-    ``station_defaults`` are the station's own defaults for the rules
-    it declares (``engine.seeding.station_rule_defaults``): its
-    template's ``rules:`` block. For those keys ``default_value`` is
-    the station's, not the registry's, and ``is_override`` means the
-    effective value differs from it — so a freshly seeded starter
-    doesn't show its own template value as "overridden", and a value
-    that differs (e.g. cleared to ``[]`` by an older Clear override)
-    does, with Reset to put it back. Without ``station_defaults``,
-    every default is the registry's.
+    ``default_value`` is the station's own default: its template's value
+    for the rules it declares (``station_declared_rules``), else the
+    registry's. ``is_override`` means the effective value differs from
+    that default, not that a row exists: a seeded starter's row holds
+    its template's value, so it reads as the default, and Reset (DELETE)
+    is offered only when it would change something.
 
     Returns a list of dicts: ``{key, kind, value, default_value,
     description, max_value, is_override}`` where:
@@ -346,7 +368,7 @@ def get_all_rules(
     from the API) closes here: GET now surfaces list rules with
     their JSON-native value shape; PUT + DELETE dispatch by kind.
     """
-    defaults = station_defaults or {}
+    defaults = station_declared_rules(db, station_id)
     overrides = {
         r.key: r
         for r in db.query(Rule).filter(Rule.station_id == station_id).all()
@@ -358,8 +380,8 @@ def get_all_rules(
         if key in RULE_DEFAULTS:
             defn = RULE_DEFAULTS[key]
             override = overrides.get(key)
-            value = int(override.value) if override is not None else defn.value
             default = int(defaults.get(key, defn.value))
+            value = int(override.value) if override is not None else default
             result.append({
                 "key": key,
                 "kind": "int",
@@ -376,13 +398,13 @@ def get_all_rules(
             # accessor so the response shape stays canonical.
             defn = RULE_LIST_DEFAULTS[key]
             override = overrides.get(key)
+            default_list = list(defaults.get(key, defn.value))
             if override is not None:
                 effective = get_rule_list_value(
                     db, station_id=station_id, key=key,
                 )
             else:
-                effective = list(defn.value)
-            default_list = list(defaults.get(key, defn.value))
+                effective = list(default_list)
             result.append({
                 "key": key,
                 "kind": "list",
@@ -473,7 +495,8 @@ def get_rule_list_value(
     """Return the effective list value for `key` on `station_id`.
 
     Per-station override stored as comma-separated string in
-    Rule.value; falls back to RULE_LIST_DEFAULTS[key].value otherwise.
+    Rule.value; else the station's template's value if it declares one
+    (`station_declared_rules`); else RULE_LIST_DEFAULTS[key].value.
     Empty string in the override row → empty list (explicit "no
     sources" override).
     """
@@ -489,6 +512,9 @@ def get_rule_list_value(
         if not raw.strip():
             return []
         return [s.strip() for s in raw.split(LIST_SEPARATOR) if s.strip()]
+    declared = station_declared_rules(db, station_id)
+    if key in declared:
+        return list(declared[key])
     # Return a copy so callers can't mutate the registry default.
     return list(RULE_LIST_DEFAULTS[key].value)
 
@@ -530,7 +556,8 @@ def set_rule_list_value(
 
 
 def clear_rule_list(db: Session, *, station_id: int, key: str) -> bool:
-    """Delete a list-rule override, reverting to RULE_LIST_DEFAULTS.
+    """Delete a list-rule override, reverting to the station's default
+    (its template's value, else RULE_LIST_DEFAULTS).
 
     Returns True if a row was deleted, False if no override existed.
     Mirrors `clear_rule` for int rules.

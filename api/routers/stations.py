@@ -325,7 +325,9 @@ def fork_station(
       - per-station Rule rows (§14.29). Operator's typical "fork
         and tweak" pattern lets the new station accumulate its
         own rule set fresh; cloning rules can be a follow-up
-        `§16.2.8.tX` if asked.
+        `§16.2.8.tX` if asked. Values the template's `rules:` block
+        declares still hold: with no row, a rule reads as the
+        template's value (`engine.rules.station_declared_rules`).
       - CursorState (regeneration-derived).
       - SourcePlaylist + entries (shared globally; nothing to
         copy at fork time).
