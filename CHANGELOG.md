@@ -23,6 +23,12 @@ this project uses semantic versioning.
   a new station, and Rebuild the layout in the visualiser. Clearing a
   rule's value says plainly that it goes back to the default.
 
+### Fixed
+
+- `station-studio generate` on the command line now applies a station's
+  cross-pool dedup, as the app does. It used to ignore it, so a station
+  with the rule (the starter) could generate a different week there.
+
 ## [1.25.0] - 2026-11-27
 
 Every release now says what it changes: on GitHub, and from the next

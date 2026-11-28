@@ -363,6 +363,57 @@ def test_generate_subcommand_creates_a_playlist(
         db.close()
 
 
+def _set_cross_pool_rule(names: list[str]) -> None:
+    from engine.database import make_engine, make_sessionmaker
+    from engine.models import Station
+    from engine.rules import set_rule_list_value
+
+    engine = make_engine()
+    try:
+        with make_sessionmaker(engine)() as db:
+            st = db.query(Station).filter(Station.slug == "cli-minimal").one()
+            set_rule_list_value(
+                db, station_id=st.id, key="cross_pool_dedup_sources", value=names,
+            )
+            db.commit()
+    finally:
+        engine.dispose()
+
+
+def test_generate_subcommand_applies_cross_pool_dedup(
+    runner: CliRunner, cli_home_with_station_and_pool: Path,
+) -> None:
+    """The CLI applies the station's cross-pool dedup, as the API does.
+    REF holds the same three tracks as TINY_POOL, so with the rule on
+    nothing is left to pick: the engine says so. Before, the CLI passed
+    no exclusions and generated as if the rule weren't there, so a
+    station with it (the starter) came out differently here and in the
+    app."""
+    lib = Path(__file__).resolve().parent / "fixtures" / "tiny-library.xml"
+    r = runner.invoke(main, ["import", str(lib), "--name", "REF", "--role", "reference"])
+    assert r.exit_code == 0, r.output
+
+    ok = runner.invoke(main, ["generate", "cli-minimal", "--week", "1"])
+    assert ok.exit_code == 0, ok.output  # no rule: generates
+
+    _set_cross_pool_rule(["REF"])
+    result = runner.invoke(main, ["generate", "cli-minimal", "--week", "2"])
+    assert result.exit_code == 1, result.output
+    assert "excluded by cross_pool_dedup_sources" in result.output
+
+
+def test_generate_subcommand_reports_a_missing_cross_pool_pool(
+    runner: CliRunner, cli_home_with_station_and_pool: Path,
+) -> None:
+    """A rule naming a pool that isn't imported stops with the reason,
+    like the API's 400, instead of quietly generating without it."""
+    _set_cross_pool_rule(["NOT_IMPORTED"])
+    result = runner.invoke(main, ["generate", "cli-minimal", "--week", "1"])
+    assert result.exit_code == 1
+    assert "NOT_IMPORTED" in result.output
+    assert "not imported" in result.output
+
+
 def test_generate_subcommand_keeps_just_this_week_changes(
     runner: CliRunner, cli_home_with_station_and_pool: Path
 ) -> None:
