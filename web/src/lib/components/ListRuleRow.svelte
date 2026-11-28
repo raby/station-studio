@@ -332,9 +332,8 @@
       only-set-if-absent. See ListRuleRow.svelte reset() docstring.
     -->
     <p id="list-rule-reset-hint-{rule.key}" class="reset-hint">
-      Removes the current value; restart the server (or
-      `make seed-stations`) to restore any template-declared
-      default for this rule.
+      Removes the current value. If the station's template sets one
+      for this rule, it comes back the next time Station Studio starts.
     </p>
   {/if}
 

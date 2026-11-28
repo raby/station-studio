@@ -765,6 +765,13 @@ class SectionRenameRequest(BaseModel):
     expected_updated_at: str | None = None
 
 
+class SidecarRebuildRequest(BaseModel):
+    """POST /api/stations/{slug}/sidecar/rebuild body: the optimistic
+    token only (409 when the station changed since the page loaded)."""
+
+    expected_updated_at: str | None = None
+
+
 class SectionsOrderRequest(BaseModel):
     """PUT /api/stations/{slug}/sections/order body (§16.2.5 D4).
 

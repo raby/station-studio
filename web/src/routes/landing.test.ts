@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest';
 
 // Hoist mock surface so vi.mock() factories (which run before imports) can
 // reach the same functions our assertions poke.
-const { getStationsMock, FakeApiError } = vi.hoisted(() => {
+const { getStationsMock, listSourcesMock, FakeApiError } = vi.hoisted(() => {
   class FakeApiError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -13,11 +13,12 @@ const { getStationsMock, FakeApiError } = vi.hoisted(() => {
       this.status = status;
     }
   }
-  return { getStationsMock: vi.fn(), FakeApiError };
+  return { getStationsMock: vi.fn(), listSourcesMock: vi.fn(), FakeApiError };
 });
 
 vi.mock('$lib/api', () => ({
   getStations: (...args: unknown[]) => getStationsMock(...args),
+  listSources: (...args: unknown[]) => listSourcesMock(...args),
   ApiError: FakeApiError,
 }));
 
@@ -33,7 +34,12 @@ describe('landing +page.svelte', () => {
   // runs `await act(); cleanup()` after each test — adding our own
   // afterEach(cleanup) double-tears the component and races the act flush,
   // which deadlocks the deferred-promise loading test specifically.
-  beforeEach(() => getStationsMock.mockReset());
+  beforeEach(() => {
+    getStationsMock.mockReset();
+    // One pool imported by default: not a first run, so no welcome.
+    listSourcesMock.mockReset();
+    listSourcesMock.mockResolvedValue([{ id: 1, name: 'DAYTIME', role: 'content', track_count: 10 }]);
+  });
 
   it('shows "Loading…" until the fetch resolves', async () => {
     // Even with a pre-resolved promise, the .then microtask hasn't run by
@@ -46,22 +52,68 @@ describe('landing +page.svelte', () => {
     await act();
   });
 
-  it('renders the ApiError message when the backend is unreachable', async () => {
+  it('says plainly when the server is not answering, with Try again', async () => {
     getStationsMock.mockRejectedValueOnce(
       new FakeApiError(503, '503 Service Unavailable: backend down'),
     );
     render(Page);
-    expect(
-      await screen.findByText(/could not reach backend.*backend down/i),
-    ).toBeInTheDocument();
-    // Also renders the recovery hint.
-    expect(screen.getByText(/python run\.py/i)).toBeInTheDocument();
+    const notice = await screen.findByTestId('backend-down');
+    expect(notice).toHaveTextContent(/isn't answering/i);
+    // The technical reason stays, folded away under Details.
+    expect(notice).toHaveTextContent(/backend down/);
+    // No command to type.
+    expect(notice).not.toHaveTextContent(/python|run\.py/i);
+
+    getStationsMock.mockResolvedValueOnce([]);
+    await fireEvent.click(screen.getByTestId('try-again'));
+    expect(await screen.findByTestId('no-stations')).toBeInTheDocument();
+    expect(screen.queryByTestId('backend-down')).toBeNull();
+    expect(getStationsMock).toHaveBeenCalledTimes(2);
   });
 
-  it('renders the empty-state copy when zero stations come back', async () => {
+  it('with no stations, offers New station and no command to type', async () => {
     getStationsMock.mockResolvedValueOnce([]);
     render(Page);
-    expect(await screen.findByText(/no stations yet/i)).toBeInTheDocument();
+    const empty = await screen.findByTestId('no-stations');
+    expect(empty).toHaveTextContent(/no stations yet/i);
+    expect(empty).not.toHaveTextContent(/python|bootstrap/i);
+    expect(screen.getAllByRole('link', { name: /new station/i }).some(
+      (a) => a.getAttribute('href') === '/stations/new',
+    )).toBe(true);
+  });
+
+  it('shows the first-run welcome when no music is imported yet', async () => {
+    listSourcesMock.mockResolvedValue([]);
+    getStationsMock.mockResolvedValueOnce([
+      {
+        id: 1, slug: 'rebirth-radio', name: 'Rebirth Radio',
+        cadence: 'weekly', playlist_count: 0,
+        last_generated_week: null, last_generated_at: null,
+        updated_at: '2026-05-01T00:00:00Z',
+      },
+    ]);
+    render(Page);
+    const welcome = await screen.findByTestId('welcome');
+    expect(screen.getByTestId('welcome-import')).toHaveAttribute('href', '/sources');
+    expect(screen.getByTestId('welcome-new-station')).toHaveAttribute('href', '/stations/new');
+    expect(welcome).toHaveTextContent(/stations below/i);
+    // The stations still list under it.
+    expect(screen.getByTestId('station-list')).toBeInTheDocument();
+  });
+
+  it('no welcome once music is imported', async () => {
+    getStationsMock.mockResolvedValueOnce([]);
+    render(Page);
+    await screen.findByTestId('no-stations');
+    expect(screen.queryByTestId('welcome')).toBeNull();
+  });
+
+  it('no welcome when asking for the pools fails', async () => {
+    listSourcesMock.mockRejectedValue(new Error('nope'));
+    getStationsMock.mockResolvedValueOnce([]);
+    render(Page);
+    await screen.findByTestId('no-stations');
+    expect(screen.queryByTestId('welcome')).toBeNull();
   });
 
   it('lists stations as links when the fetch returns rows', async () => {
@@ -176,7 +228,7 @@ describe('landing +page.svelte', () => {
     // The component stringifies non-ApiError via String(e), which yields
     // "TypeError: network fetch failed" — proves the instanceof branch.
     expect(
-      await screen.findByText(/could not reach backend.*network fetch failed/i),
+      await screen.findByText('TypeError: network fetch failed'),
     ).toBeInTheDocument();
   });
 });

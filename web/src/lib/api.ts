@@ -1498,6 +1498,29 @@ export const reorderSections = async (
 };
 
 
+/** POST /api/stations/{slug}/sidecar/rebuild — make the visualiser's
+ *  layout again from the station's rules (the "Rebuild the layout"
+ *  button). Replaces named and grouped sections, so callers confirm
+ *  first. Also the way out when the saved layout no longer fits the
+ *  rules, which blocks every other layout edit. */
+export const rebuildSidecar = async (
+  slug: string,
+  expectedUpdatedAt: string | null,
+  fetch_ = fetch,
+): Promise<SidecarMutationResponse> => {
+  const res = await fetch_(
+    `/api/stations/${encodeURIComponent(slug)}/sidecar/rebuild`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expected_updated_at: expectedUpdatedAt }),
+    },
+  );
+  if (res.status === 409) await _handleConcurrencyConflict(res);
+  return json<SidecarMutationResponse>(res);
+};
+
+
 /** PATCH /api/stations/{slug}/blocks/move — move an ATOMIC block
  *  to another section. Macros aren't movable in §16.2.5 (the sidecar
  *  position-math can't sustain it without grammar changes); the
