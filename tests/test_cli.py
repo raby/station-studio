@@ -779,3 +779,86 @@ def test_wrote_output_format_is_uniform(
     assert r_bk.exit_code == 0
     assert "Wrote " in r_bk.output
     assert " bytes)" in r_bk.output
+
+
+# ---------- CLI and app generate the same week ----------
+
+
+@pytest.mark.parametrize("slug", ["starter", "stateful-starter"])
+def test_cli_and_app_generate_the_same_week(
+    runner: CliRunner, isolated_cli_home: Path, monkeypatch, slug: str,
+) -> None:
+    """The CLI claims to be a thin wrapper over the app's generate; two
+    drifts (no seed, no cross-pool dedup) slipped past because nothing
+    compared them. The real starter (rng on, weighted + jingle slots,
+    cross_pool_dedup_sources) and stateful starter (persistent cursors)
+    generate weeks 1 and 2 with the same seeds through each, into
+    separate databases: the same songs, in order."""
+    from fastapi.testclient import TestClient
+
+    from api.deps import get_db
+    from api.main import app
+    from engine.database import make_engine, make_sessionmaker
+    from engine.models import Base
+    from engine.seeding import _REPO_STATIONS_DIR, auto_import_starter_pools, seed_station
+
+    def setup(db_url: str | None):
+        engine = make_engine(db_url) if db_url else make_engine()
+        Base.metadata.create_all(engine)
+        Session = make_sessionmaker(engine)
+        with Session() as db:
+            seed_station(db, _REPO_STATIONS_DIR / f"{slug}.json")
+            auto_import_starter_pools(db, _REPO_STATIONS_DIR)
+            db.commit()
+        return engine, Session
+
+    def tracks(Session) -> dict[int, list]:
+        from engine.models import Playlist
+
+        with Session() as db:
+            return {
+                p.week: [(e.source_name, e.track.persistent_id) for e in p.entries]
+                for p in db.query(Playlist).all()
+            }
+
+    # Through the CLI, in its own app home.
+    assert runner.invoke(main, ["seed"]).exit_code == 0
+    cli_engine, CliSession = setup(None)
+    # Week 2 follows week 1's cursors (stateful) and previous playlist.
+    for week, seed in ((1, "20261128"), (2, "77")):
+        r = runner.invoke(main, ["generate", slug, "--week", str(week), "--seed", seed])
+        assert r.exit_code == 0, r.output
+    cli_tracks = tracks(CliSession)
+    cli_engine.dispose()
+
+    # Through the app's API, in a database of its own. (Its start-up
+    # seeding would go to the CLI's database, which bootstrap put in
+    # the environment.)
+    monkeypatch.setenv("STATION_STUDIO_SKIP_AUTO_SEED", "1")
+    app_db = isolated_cli_home.parent / "app.db"
+    app_engine, AppSession = setup(f"sqlite:///{app_db}")
+
+    def _override():
+        db = AppSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _override
+    try:
+        with TestClient(app, base_url="http://localhost") as client:
+            for week, seed in ((1, 20261128), (2, 77)):
+                r = client.post(
+                    f"/api/stations/{slug}/generate", json={"week": week, "seed": seed},
+                )
+                assert r.status_code == 201, r.json()
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+    app_tracks = tracks(AppSession)
+    app_engine.dispose()
+
+    assert set(cli_tracks) == {1, 2}
+    assert all(cli_tracks[w] for w in (1, 2))
+    assert cli_tracks == app_tracks
+    assert cli_tracks[1] != cli_tracks[2]
