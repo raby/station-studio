@@ -231,8 +231,36 @@ describe('<ListRuleRow>', () => {
     expect(screen.getByTestId('list-rule-reset')).toBeInTheDocument();
     // Its hint promises only what happens: no command, no restart.
     const hint = document.getElementById('list-rule-reset-hint-' + listRule().key);
-    expect(hint).toHaveTextContent(/default/);
+    expect(hint).toHaveTextContent("Puts back this station's default: none.");
     expect(hint).not.toHaveTextContent(/make |seed|restart|starts/i);
+  });
+
+  it("Reset's hint names the template's value it puts back", async () => {
+    render(ListRuleRow, {
+      slug: 'starter',
+      rule: listRule({ value: [], default_value: ['REFERENCE_ARCHIVE'], is_override: true }),
+    });
+    await screen.findByTestId('list-rule-row');
+    expect(screen.getByTestId('list-rule-reset')).toHaveTextContent('Reset to default');
+    expect(document.getElementById('list-rule-reset-hint-cross_pool_dedup_sources'))
+      .toHaveTextContent("Puts back this station's default: REFERENCE_ARCHIVE.");
+  });
+
+  it("Reset to a template's value shows that value afterwards", async () => {
+    clearStationRuleMock.mockResolvedValueOnce(undefined);
+    let captured: Rule | null = null;
+    const { on } = renderWithEvents(ListRuleRow, {
+      slug: 'starter',
+      rule: listRule({ value: [], default_value: ['REFERENCE_ARCHIVE'], is_override: true }),
+    });
+    on('updated', (e: CustomEvent<Rule>) => {
+      captured = e.detail;
+    });
+    await screen.findByTestId('list-rule-row');
+    await fireEvent.click(screen.getByTestId('list-rule-reset'));
+    await waitFor(() => expect(captured).not.toBeNull());
+    expect(captured!.value).toEqual(['REFERENCE_ARCHIVE']);
+    expect(screen.getByText('REFERENCE_ARCHIVE')).toBeInTheDocument();
   });
 
   it('Reset DELETEs + emits updated with default_value + is_override=false', async () => {

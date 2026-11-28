@@ -20,11 +20,21 @@ this project uses semantic versioning.
 - No page asks you to type a command any more. Where one did, there's a
   button or plain words instead: Try again when Station Studio isn't
   answering, the welcome when there are no stations, Generate week 1 on
-  a new station, and Rebuild the layout in the visualiser. Clearing a
-  rule's value says plainly that it goes back to the default.
+  a new station, and Rebuild the layout in the visualiser. Resetting a
+  rule says which value it puts back.
 
 ### Fixed
 
+- A rule that a station's template sets (the starter's "Cross pool
+  dedup sources", say) keeps the template's value:
+  - Reset to default puts it back. Before, Reset went to Station
+    Studio's own default and the template's value never came back.
+  - A value already lost that way is back by itself.
+  - A station made with Fork station keeps it too; before, forks
+    ignored it. Saving a station in its form no longer drops it.
+  - It now shows as the station's default rather than as overridden.
+  - If you'd deleted the pool it names, generating now says so: remove
+    the pool from the rule to carry on.
 - `station-studio generate` on the command line now generates as the
   app does:
   - Without `--seed`, it works for stations with randomness on (the

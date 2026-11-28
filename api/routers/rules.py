@@ -8,7 +8,9 @@ Endpoints:
                                                default, and is_override flag
 - PUT    /api/stations/{slug}/rules/{key}   — upsert a per-station override
 - DELETE /api/stations/{slug}/rules/{key}   — clear the override (revert
-                                               to default)
+                                               to the station's default:
+                                               its template's value, else
+                                               the registry's)
 
 The list endpoint covers BOTH int rules (RULE_DEFAULTS) and list
 rules (RULE_LIST_DEFAULTS) post-§16.14.t10. The kind discriminator
@@ -136,7 +138,11 @@ def set_rule(
     status_code=204,
 )
 def delete_rule(slug: str, key: str, db: Session = Depends(get_db)):
-    """Clear the override for `key`, reverting to the default.
+    """Clear the override for `key`, reverting to the station's default.
+
+    With no stored value, a rule reads as the station's template's value
+    when it declares one (the starter's `cross_pool_dedup_sources`,
+    say), else the registry's: see `engine.rules.station_declared_rules`.
 
     §16.14.t10 — dispatches by kind:
 

@@ -154,8 +154,8 @@
 <section class="rules-panel" data-testid="rules-panel">
   <h2>Rules</h2>
   <p class="hint">
-    Per-station overrides for the engine's generation rules. Unset
-    rules use the engine default (shown greyed).
+    This station's generation rules. Each starts at the station's
+    default: the value its template sets, or else Station Studio's.
   </p>
 
   {#if loading}

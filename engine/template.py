@@ -401,7 +401,7 @@ def parse_template(raw: dict) -> Template:
 
     # §16.14.t9 D3 — parse-time fail-loud rule validation. Two
     # dispatchable dicts handed to seed_station.
-    rule_int_overrides, rule_list_overrides = _parse_rules(raw.get("rules"))
+    rule_int_overrides, rule_list_overrides = parse_rules(raw.get("rules"))
 
     tmpl = Template(
         station=raw["station"],
@@ -521,7 +521,7 @@ def parse_template(raw: dict) -> Template:
     return tmpl
 
 
-def _parse_rules(
+def parse_rules(
     raw: dict | None,
 ) -> tuple[dict[str, int], dict[str, list[str]]]:
     """§16.14.t9 — parse + validate the template's optional `rules:` block.
@@ -550,7 +550,7 @@ def _parse_rules(
     Parser-vs-accessor divergence (c1 review F5): the parser is
     STRICTER on list-rule entries. ``set_rule_list_value`` silently
     DROPS empty/whitespace-only entries (a tolerant accessor for
-    UI / API callers); ``_parse_rules`` REJECTS them. The parse-time
+    UI / API callers); ``parse_rules`` REJECTS them. The parse-time
     path treats empty entries as operator typos worth surfacing.
     Keep that asymmetry — don't "fix" the accessor to match.
     """

@@ -73,10 +73,11 @@
   $: ruleValue = Array.isArray(rule.value) ? (rule.value as string[]) : [];
   $: isDirty = !arraysEqual(staged, ruleValue);
 
-  /** Hide Reset when there's no override to clear (D10 — match
-   * int-row pattern). If `is_override` is false, the row is
-   * already at the registry/template default; Reset would no-op. */
+  /** Hide Reset when the value is already the station's default
+   * (D10 — match int-row pattern): `is_override` is false then, and
+   * Reset would no-op. */
   $: showReset = rule.is_override;
+  $: defaultList = Array.isArray(rule.default_value) ? (rule.default_value as string[]) : [];
 
   /** Autocomplete suggestions visible to the user: filter to
    * reference-role pools, exclude already-chipped names, narrow
@@ -165,44 +166,25 @@
     }
   }
 
-  /** Reset = DELETE the Rule row (D2).
+  /** Reset = DELETE the Rule row (D2), which puts the station's
+   * default back: its template's value when it declares one (the
+   * starter's `cross_pool_dedup_sources` is ["REFERENCE_ARCHIVE"]),
+   * else the registry's. `default_value` is that same default (the
+   * rules API reads it from the template), so the row can show it
+   * without a refetch.
    *
-   * **c1 review F1 — registry-vs-template default trap.** The
-   * design pass D2 said "next GET returns the registry/template
-   * default" assuming they're the same. They're NOT for list
-   * rules with template overrides. Example: the starter's
-   * `cross_pool_dedup_sources` ships as
-   * `rules: {cross_pool_dedup_sources: ["REFERENCE_ARCHIVE"]}`
-   * in stations/starter.json. After clicking Reset:
-   *
-   *   1. We DELETE the Rule row.
-   *   2. Next GET returns `[]` (the REGISTRY default from
-   *      `engine.rules.RULE_LIST_DEFAULTS`), NOT
-   *      `["REFERENCE_ARCHIVE"]` (the TEMPLATE default).
-   *   3. The template default reappears only on the next
-   *      `seed_station` run, and start-up runs that only when the
-   *      database has no stations — so in the app, not on a
-   *      restart. (`make seed-stations` re-applies it in a dev
-   *      checkout: only-set-if-absent in seed_station.)
-   *
-   * So "Reset" really means "Clear my override" not "Restore
-   * the factory default." The button label is technically
-   * accurate for int rules (where registry and template
-   * defaults are usually the same) but misleading for list
-   * rules with template overrides. The engine-level fix
-   * (surfacing both defaults in the API response) defers to
-   * a future polish slice; until then, the placeholder hint
-   * near the button names the trap. */
+   * (c1 review F1 found the trap this used to have: DELETE gave the
+   * registry's [] and the template's value never came back in the
+   * app. The API now writes the template's value straight back.) */
   async function reset() {
     saving = true;
     error = null;
     try {
       await clearStationRule(slug, rule.key);
-      // After DELETE, the effective value is the registry/template
-      // default — but we don't have it on hand without re-reading.
-      // Emit a synthetic updated rule with the default values so
-      // the parent's `rules` array stays correct without a refetch.
-      // The default_value field on `rule` carries the right shape.
+      // After DELETE, the effective value is the station's default,
+      // which `default_value` already carries. Emit a synthetic
+      // updated rule so the parent's `rules` array stays correct
+      // without a refetch.
       const defaultValue = Array.isArray(rule.default_value)
         ? (rule.default_value as string[])
         : [];
@@ -320,22 +302,16 @@
         on:click={reset}
         aria-describedby="list-rule-reset-hint-{rule.key}"
       >
-        Clear override
+        Reset to default
       </button>
     {/if}
   </div>
 
   {#if showReset}
-    <!--
-      §16.14.t11 c1 review F1: name the trap honestly.
-      "Clear override" gives the REGISTRY default, not the template
-      default. A restart doesn't bring the template's value back:
-      start-up only seeds stations into an empty database (see
-      api/main.py's lifespan), so the hint promises neither.
-    -->
+    <!-- Says what Reset will put back: the station's own default. -->
     <p id="list-rule-reset-hint-{rule.key}" class="reset-hint">
-      Clears this station's value, so the rule goes back to Station
-      Studio's default.
+      Puts back this station's default:
+      {defaultList.length ? defaultList.join(', ') : 'none'}.
     </p>
   {/if}
 

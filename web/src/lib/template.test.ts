@@ -217,6 +217,38 @@ describe('round-trip: unpack ↔ buildTemplate', () => {
     expect(roundTripped).toEqual(original);
   });
 
+  it("keeps the template's rules: block, which the form doesn't edit", () => {
+    // Saving a station in the form must not drop it: it's the default a
+    // station with no stored rule values (a fork, say) reads.
+    const loaded: StationFormPayload = {
+      slug: 'ref',
+      name: 'Ref',
+      template: {
+        station: 'ref', cadence: 'weekly', rng: 'off',
+        sources: [{ name: 'A', colour: '#c0392b', role: 'content' }],
+        cursor: { base_advance_per_week: 0, cycle_weeks: 1 },
+        layout: { unit: 'day', unit_labels: ['Mon'], row_start_offsets: [0],
+                  row_template: [{ source: 'A', strategy: 'pick', size: 1 }] },
+        rules: { cross_pool_dedup_sources: ['REFERENCE_ARCHIVE'], artist_dedup_window: 5 },
+      },
+    };
+    const state = unpack(loaded);
+    const rebuilt = buildTemplate({ ...state, name: 'Renamed' });
+    expect(rebuilt.rules).toEqual({
+      cross_pool_dedup_sources: ['REFERENCE_ARCHIVE'], artist_dedup_window: 5,
+    });
+    // A copy: editing the form's state doesn't reach the loaded template.
+    (state.rules!.cross_pool_dedup_sources as string[]).push('X');
+    expect((loaded.template.rules as Record<string, string[]>).cross_pool_dedup_sources)
+      .toEqual(['REFERENCE_ARCHIVE']);
+  });
+
+  it('adds no rules: block when the template had none', () => {
+    const state = unpack({ slug: 's', name: 's', template: { station: 's' } });
+    expect('rules' in state).toBe(false);
+    expect('rules' in buildTemplate(state)).toBe(false);
+  });
+
   it('round-trips cleanly with rng:off (seed omitted from JSON)', () => {
     // Review N4 (§14.20): the rng:on case above exercises the seed path;
     // this pins the rng:off path where buildTemplate omits `seed` entirely
