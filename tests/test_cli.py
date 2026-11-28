@@ -363,6 +363,124 @@ def test_generate_subcommand_creates_a_playlist(
         db.close()
 
 
+def _set_cross_pool_rule(names: list[str]) -> None:
+    from engine.database import make_engine, make_sessionmaker
+    from engine.models import Station
+    from engine.rules import set_rule_list_value
+
+    engine = make_engine()
+    try:
+        with make_sessionmaker(engine)() as db:
+            st = db.query(Station).filter(Station.slug == "cli-minimal").one()
+            set_rule_list_value(
+                db, station_id=st.id, key="cross_pool_dedup_sources", value=names,
+            )
+            db.commit()
+    finally:
+        engine.dispose()
+
+
+def test_generate_subcommand_applies_cross_pool_dedup(
+    runner: CliRunner, cli_home_with_station_and_pool: Path,
+) -> None:
+    """The CLI applies the station's cross-pool dedup, as the API does.
+    REF holds the same three tracks as TINY_POOL, so with the rule on
+    nothing is left to pick: the engine says so. Before, the CLI passed
+    no exclusions and generated as if the rule weren't there, so a
+    station with it (the starter) came out differently here and in the
+    app."""
+    lib = Path(__file__).resolve().parent / "fixtures" / "tiny-library.xml"
+    r = runner.invoke(main, ["import", str(lib), "--name", "REF", "--role", "reference"])
+    assert r.exit_code == 0, r.output
+
+    ok = runner.invoke(main, ["generate", "cli-minimal", "--week", "1"])
+    assert ok.exit_code == 0, ok.output  # no rule: generates
+
+    _set_cross_pool_rule(["REF"])
+    result = runner.invoke(main, ["generate", "cli-minimal", "--week", "2"])
+    assert result.exit_code == 1, result.output
+    assert "excluded by cross_pool_dedup_sources" in result.output
+
+
+def test_generate_subcommand_reports_a_missing_cross_pool_pool(
+    runner: CliRunner, cli_home_with_station_and_pool: Path,
+) -> None:
+    """A rule naming a pool that isn't imported stops with the reason,
+    like the API's 400, instead of quietly generating without it."""
+    _set_cross_pool_rule(["NOT_IMPORTED"])
+    result = runner.invoke(main, ["generate", "cli-minimal", "--week", "1"])
+    assert result.exit_code == 1
+    assert "NOT_IMPORTED" in result.output
+    assert "not imported" in result.output
+
+
+def _set_station_rng_on() -> None:
+    from engine.database import make_engine, make_sessionmaker
+    from engine.models import Station
+
+    engine = make_engine()
+    try:
+        with make_sessionmaker(engine)() as db:
+            st = db.query(Station).filter(Station.slug == "cli-minimal").one()
+            st.template = {**st.template, "rng": "on"}
+            db.commit()
+    finally:
+        engine.dispose()
+
+
+def _week_seed(home: Path, week: int):
+    import sqlite3
+
+    db = sqlite3.connect(home / "station_studio.db")
+    try:
+        row = db.execute(
+            "SELECT v.seed FROM playlist p JOIN playlist_version v "
+            "ON v.playlist_id = p.id WHERE p.week = ? "
+            "ORDER BY v.version_no DESC LIMIT 1", (week,),
+        ).fetchone()
+        return None if row is None else row[0]
+    finally:
+        db.close()
+
+
+def test_generate_subcommand_picks_a_seed_for_a_new_rng_on_week(
+    runner: CliRunner, cli_home_with_station_and_pool: Path,
+) -> None:
+    """Three of the four bundled stations have rng on, and the engine
+    won't run one without a seed. Without --seed the CLI now picks one
+    for a new week, as the app does, and says which."""
+    _set_station_rng_on()
+    result = runner.invoke(main, ["generate", "cli-minimal", "--week", "1"])
+    assert result.exit_code == 0, result.output
+    seed = _week_seed(cli_home_with_station_and_pool, 1)
+    assert isinstance(seed, int)
+    assert f"seed {seed}" in result.output
+
+
+def test_generate_subcommand_regenerates_an_rng_on_week_with_its_seed(
+    runner: CliRunner, cli_home_with_station_and_pool: Path,
+) -> None:
+    """Regenerating without --seed reuses the week's own seed, as the
+    app does, so unchanged rules give the same week."""
+    _set_station_rng_on()
+    first = runner.invoke(main, ["generate", "cli-minimal", "--week", "1", "--seed", "4242"])
+    assert first.exit_code == 0, first.output
+    again = runner.invoke(main, ["generate", "cli-minimal", "--week", "1"])
+    assert again.exit_code == 0, again.output
+    assert _week_seed(cli_home_with_station_and_pool, 1) == 4242
+    assert "seed 4242" in again.output
+
+
+def test_generate_subcommand_seed_flag_still_wins(
+    runner: CliRunner, cli_home_with_station_and_pool: Path,
+) -> None:
+    _set_station_rng_on()
+    runner.invoke(main, ["generate", "cli-minimal", "--week", "1", "--seed", "1"])
+    r = runner.invoke(main, ["generate", "cli-minimal", "--week", "1", "--seed", "2"])
+    assert r.exit_code == 0, r.output
+    assert _week_seed(cli_home_with_station_and_pool, 1) == 2
+
+
 def test_generate_subcommand_keeps_just_this_week_changes(
     runner: CliRunner, cli_home_with_station_and_pool: Path
 ) -> None:
@@ -661,3 +779,86 @@ def test_wrote_output_format_is_uniform(
     assert r_bk.exit_code == 0
     assert "Wrote " in r_bk.output
     assert " bytes)" in r_bk.output
+
+
+# ---------- CLI and app generate the same week ----------
+
+
+@pytest.mark.parametrize("slug", ["starter", "stateful-starter"])
+def test_cli_and_app_generate_the_same_week(
+    runner: CliRunner, isolated_cli_home: Path, monkeypatch, slug: str,
+) -> None:
+    """The CLI claims to be a thin wrapper over the app's generate; two
+    drifts (no seed, no cross-pool dedup) slipped past because nothing
+    compared them. The real starter (rng on, weighted + jingle slots,
+    cross_pool_dedup_sources) and stateful starter (persistent cursors)
+    generate weeks 1 and 2 with the same seeds through each, into
+    separate databases: the same songs, in order."""
+    from fastapi.testclient import TestClient
+
+    from api.deps import get_db
+    from api.main import app
+    from engine.database import make_engine, make_sessionmaker
+    from engine.models import Base
+    from engine.seeding import _REPO_STATIONS_DIR, auto_import_starter_pools, seed_station
+
+    def setup(db_url: str | None):
+        engine = make_engine(db_url) if db_url else make_engine()
+        Base.metadata.create_all(engine)
+        Session = make_sessionmaker(engine)
+        with Session() as db:
+            seed_station(db, _REPO_STATIONS_DIR / f"{slug}.json")
+            auto_import_starter_pools(db, _REPO_STATIONS_DIR)
+            db.commit()
+        return engine, Session
+
+    def tracks(Session) -> dict[int, list]:
+        from engine.models import Playlist
+
+        with Session() as db:
+            return {
+                p.week: [(e.source_name, e.track.persistent_id) for e in p.entries]
+                for p in db.query(Playlist).all()
+            }
+
+    # Through the CLI, in its own app home.
+    assert runner.invoke(main, ["seed"]).exit_code == 0
+    cli_engine, CliSession = setup(None)
+    # Week 2 follows week 1's cursors (stateful) and previous playlist.
+    for week, seed in ((1, "20261128"), (2, "77")):
+        r = runner.invoke(main, ["generate", slug, "--week", str(week), "--seed", seed])
+        assert r.exit_code == 0, r.output
+    cli_tracks = tracks(CliSession)
+    cli_engine.dispose()
+
+    # Through the app's API, in a database of its own. (Its start-up
+    # seeding would go to the CLI's database, which bootstrap put in
+    # the environment.)
+    monkeypatch.setenv("STATION_STUDIO_SKIP_AUTO_SEED", "1")
+    app_db = isolated_cli_home.parent / "app.db"
+    app_engine, AppSession = setup(f"sqlite:///{app_db}")
+
+    def _override():
+        db = AppSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _override
+    try:
+        with TestClient(app, base_url="http://localhost") as client:
+            for week, seed in ((1, 20261128), (2, 77)):
+                r = client.post(
+                    f"/api/stations/{slug}/generate", json={"week": week, "seed": seed},
+                )
+                assert r.status_code == 201, r.json()
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+    app_tracks = tracks(AppSession)
+    app_engine.dispose()
+
+    assert set(cli_tracks) == {1, 2}
+    assert all(cli_tracks[w] for w in (1, 2))
+    assert cli_tracks == app_tracks
+    assert cli_tracks[1] != cli_tracks[2]

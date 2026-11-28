@@ -36,6 +36,17 @@ this project uses semantic versioning.
   - If you'd deleted the pool it names, generating now says so: remove
     the pool from the rule to carry on.
 
+### Fixed
+
+- `station-studio generate` on the command line now generates as the
+  app does:
+  - Without `--seed`, it works for stations with randomness on (the
+    starter, Stateful Starter and Rebirth Radio): a new week gets a new
+    seed, and regenerating a week reuses its own. It used to stop with
+    "rng='on' template requires a seed". It prints the seed it used.
+  - It applies a station's cross-pool dedup. It used to ignore it, so
+    the starter could get tracks its reference pool rules out.
+
 ## [1.25.0] - 2026-11-27
 
 Every release now says what it changes: on GitHub, and from the next

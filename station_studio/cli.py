@@ -21,6 +21,7 @@ All six subcommands share the same shape:
 """
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 import click
@@ -283,10 +284,10 @@ def seed() -> None:
     type=int,
     default=None,
     help=(
-        "Override the random seed. Default: engine-internal seed "
-        "(None passes through to `engine.generator.generate`, which "
-        "derives one from the run state). Matches the API endpoint's "
-        "`GenerateRequest.seed` default."
+        "The random seed, for a station with randomness on. Default, as "
+        "in the app: regenerating a week reuses the seed it was "
+        "generated with; a new week gets a new one. The seed used is "
+        "printed. Ignored when randomness is off."
     ),
 )
 @click.pass_context
@@ -297,8 +298,9 @@ def generate_cmd(
 
     Mirrors `api/routers/generate.py:generate_playlist` step-for-step —
     same load_pools / load_alias_map / load_excluded_mix_ids /
-    load_previous_playlist / load_cursor_positions sequence, same
-    `save_playlist` + `advance_cursors` post-call. The CLI is a thin
+    load_excluded_track_pids / load_previous_playlist / plan_cursors
+    sequence, the same seed choice (regeneration_seed), same
+    `save_playlist` + `finish_cursors` post-call. The CLI is a thin
     wrapper, NOT a parallel implementation, so engine bug fixes (and
     bugs!) land here automatically.
 
@@ -324,8 +326,9 @@ def generate_cmd(
     from engine.models import Base, Station
     from engine.persistence import (
         finish_cursors, load_alias_map, plan_cursors,
-        load_excluded_mix_ids, load_pools, load_previous_playlist,
-        max_mix_exclusion_window, save_playlist,
+        load_excluded_mix_ids, load_excluded_track_pids, load_pools,
+        load_previous_playlist, max_mix_exclusion_window,
+        regeneration_seed, save_playlist,
     )
     from engine.rules import get_rule_value
     from engine.template import TemplateError, parse_template
@@ -394,6 +397,29 @@ def generate_cmd(
             )
             named_cursor_positions = cursor_plan.positions
 
+            # §16.14.t5 cross-pool dedup, as the API does: without it the
+            # CLI ignored `cross_pool_dedup_sources` and the starter's
+            # weighted blocks could pick tracks its reference pool rules
+            # out, so the same week came out differently here and in
+            # the app. Fails loud on a missing or content-role pool, like
+            # the API's 400.
+            try:
+                excluded_track_pids = load_excluded_track_pids(
+                    db, station_id=station.id,
+                )
+            except (ValueError, TemplateError) as e:
+                click.echo(f"Error: {e}", err=True)
+                ctx.exit(1)
+
+            # rng='on' needs a seed, and the engine won't pick one. As
+            # the app: regenerating reuses the week's own (so unchanged
+            # rules give the same week), and a new week gets a new one,
+            # in the range the station page's seeds come from.
+            if seed is None and template.rng == "on":
+                seed = regeneration_seed(db, station_id=station.id, week=week)
+                if seed is None:
+                    seed = random.randrange(2**31)
+
             inputs = EngineInputs(
                 week=week, seed=seed,
                 excluded_mix_ids=excluded_mix_ids,
@@ -402,6 +428,7 @@ def generate_cmd(
                 # t2-review 🟡-1: was missing — now matches the API.
                 weighted_window_default=artist_dedup_window,
                 named_cursor_positions=named_cursor_positions,
+                excluded_track_pids=excluded_track_pids,
             )
             try:
                 result = engine_generate(template, pools, **inputs.kwargs())
@@ -461,9 +488,10 @@ def generate_cmd(
                 )
                 db.commit()
 
+            used = f", seed {seed}" if template.rng == "on" else ""
             click.echo(
                 f"Generated playlist {playlist.id} for '{slug}' week {week} "
-                f"({len(result.picks)} slots)."
+                f"({len(result.picks)} slots{used})."
             )
             if applied.applied:
                 n = len(applied.applied)
