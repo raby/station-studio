@@ -100,6 +100,8 @@
   let unitLabels = _init.unitLabels;
   let rowStartOffsets = _init.rowStartOffsets;
   let rowTemplate: RowBlock[] = _init.rowTemplate;
+  // Not edited here (the Rules panel edits rules), only kept.
+  const rules = _init.rules;
 
   // Only content sources can fill layout blocks (enforced server-side).
   $: contentSourceNames = sources
@@ -147,7 +149,7 @@
     return {
       slug, name, cadence, rng, seedStr, sources,
       baseAdvancePerWeek, cycleWeeks, unit,
-      unitLabels, rowStartOffsets, rowTemplate,
+      unitLabels, rowStartOffsets, rowTemplate, rules,
     };
   }
 
@@ -234,7 +236,7 @@
     const s: FormState = {
       slug, name, cadence, rng, seedStr, sources,
       baseAdvancePerWeek, cycleWeeks, unit,
-      unitLabels, rowStartOffsets, rowTemplate,
+      unitLabels, rowStartOffsets, rowTemplate, rules,
     };
     return s;
   })();

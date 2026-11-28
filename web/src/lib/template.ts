@@ -44,6 +44,11 @@ export type FormState = {
   /** Array of per-row start offsets (e.g. [0, 10, 20, ...]). */
   rowStartOffsets: number[];
   rowTemplate: RowBlock[];
+  /** The template's `rules:` block, which the form doesn't edit (the
+   *  Rules panel does, per station) but must keep: it's the station's
+   *  own default for each rule it declares, which a station without
+   *  stored values (a fork, say) reads. Absent when there's none. */
+  rules?: Record<string, unknown>;
 };
 
 /**
@@ -111,8 +116,15 @@ export function unpack(initial: StationFormPayload): FormState {
   const tplUnitLabels = (layout.unit_labels as string[] | undefined) ?? [];
   const tplOffsets = (layout.row_start_offsets as number[] | undefined) ?? [];
 
+  const tplRules = t.rules;
+  const rules =
+    tplRules !== null && typeof tplRules === 'object' && !Array.isArray(tplRules)
+      ? (JSON.parse(JSON.stringify(tplRules)) as Record<string, unknown>)
+      : undefined;
+
   const d = defaults();
   return {
+    ...(rules ? { rules } : {}),
     slug: initial.slug,
     name: initial.name,
     cadence: (t.cadence as FormState['cadence']) ?? d.cadence,
@@ -172,6 +184,9 @@ export function buildTemplate(state: FormState): Record<string, unknown> {
   if (state.rng === 'on' && state.seedStr.trim() !== '') {
     t['seed'] = Number(state.seedStr);
   }
+  // Kept as loaded: dropping it would change what the station's rules
+  // fall back to.
+  if (state.rules) t['rules'] = state.rules;
   return t;
 }
 

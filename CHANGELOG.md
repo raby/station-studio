@@ -31,8 +31,10 @@ this project uses semantic versioning.
     Studio's own default and the template's value never came back.
   - A value already lost that way is back by itself.
   - A station made with Fork station keeps it too; before, forks
-    ignored it.
+    ignored it. Saving a station in its form no longer drops it.
   - It now shows as the station's default rather than as overridden.
+  - If you'd deleted the pool it names, generating now says so: remove
+    the pool from the rule to carry on.
 
 ## [1.25.0] - 2026-11-27
 
