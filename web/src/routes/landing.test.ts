@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest';
 
 // Hoist mock surface so vi.mock() factories (which run before imports) can
 // reach the same functions our assertions poke.
-const { getStationsMock, listSourcesMock, FakeApiError } = vi.hoisted(() => {
+const { getStationsMock, FakeApiError } = vi.hoisted(() => {
   class FakeApiError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -13,12 +13,11 @@ const { getStationsMock, listSourcesMock, FakeApiError } = vi.hoisted(() => {
       this.status = status;
     }
   }
-  return { getStationsMock: vi.fn(), listSourcesMock: vi.fn(), FakeApiError };
+  return { getStationsMock: vi.fn(), FakeApiError };
 });
 
 vi.mock('$lib/api', () => ({
   getStations: (...args: unknown[]) => getStationsMock(...args),
-  listSources: (...args: unknown[]) => listSourcesMock(...args),
   ApiError: FakeApiError,
 }));
 
@@ -34,12 +33,7 @@ describe('landing +page.svelte', () => {
   // runs `await act(); cleanup()` after each test — adding our own
   // afterEach(cleanup) double-tears the component and races the act flush,
   // which deadlocks the deferred-promise loading test specifically.
-  beforeEach(() => {
-    getStationsMock.mockReset();
-    // One pool imported by default: not a first run, so no welcome.
-    listSourcesMock.mockReset();
-    listSourcesMock.mockResolvedValue([{ id: 1, name: 'DAYTIME', role: 'content', track_count: 10 }]);
-  });
+  beforeEach(() => getStationsMock.mockReset());
 
   it('shows "Loading…" until the fetch resolves', async () => {
     // Even with a pre-resolved promise, the .then microtask hasn't run by
@@ -66,32 +60,21 @@ describe('landing +page.svelte', () => {
 
     getStationsMock.mockResolvedValueOnce([]);
     await fireEvent.click(screen.getByTestId('try-again'));
-    expect(await screen.findByTestId('no-stations')).toBeInTheDocument();
+    expect(await screen.findByTestId('welcome')).toBeInTheDocument();
     expect(screen.queryByTestId('backend-down')).toBeNull();
     expect(getStationsMock).toHaveBeenCalledTimes(2);
   });
 
-  it('with no stations, offers New station and no command to type', async () => {
-    getStationsMock.mockResolvedValueOnce([]);
-    render(Page);
-    const empty = await screen.findByTestId('no-stations');
-    expect(empty).toHaveTextContent(/no stations yet/i);
-    expect(empty).not.toHaveTextContent(/python|bootstrap/i);
-    expect(screen.getAllByRole('link', { name: /new station/i }).some(
-      (a) => a.getAttribute('href') === '/stations/new',
-    )).toBe(true);
+  const station = (slug: string, playlistCount: number) => ({
+    id: 1, slug, name: slug, cadence: 'weekly', playlist_count: playlistCount,
+    last_generated_week: playlistCount ? 1 : null,
+    last_generated_at: playlistCount ? '2026-05-01T00:00:00Z' : null,
+    updated_at: '2026-05-01T00:00:00Z',
   });
 
-  it('shows the first-run welcome when no music is imported yet', async () => {
-    listSourcesMock.mockResolvedValue([]);
-    getStationsMock.mockResolvedValueOnce([
-      {
-        id: 1, slug: 'rebirth-radio', name: 'Rebirth Radio',
-        cadence: 'weekly', playlist_count: 0,
-        last_generated_week: null, last_generated_at: null,
-        updated_at: '2026-05-01T00:00:00Z',
-      },
-    ]);
+  it('shows the first-run welcome until a week is generated', async () => {
+    // A new install: stations and their sample pools, nothing generated.
+    getStationsMock.mockResolvedValueOnce([station('starter', 0)]);
     render(Page);
     const welcome = await screen.findByTestId('welcome');
     expect(screen.getByTestId('welcome-import')).toHaveAttribute('href', '/sources');
@@ -101,18 +84,27 @@ describe('landing +page.svelte', () => {
     expect(screen.getByTestId('station-list')).toBeInTheDocument();
   });
 
-  it('no welcome once music is imported', async () => {
-    getStationsMock.mockResolvedValueOnce([]);
+  it('no welcome once any station has a week', async () => {
+    getStationsMock.mockResolvedValueOnce([station('a', 0), station('b', 2)]);
     render(Page);
-    await screen.findByTestId('no-stations');
+    await screen.findByTestId('station-list');
     expect(screen.queryByTestId('welcome')).toBeNull();
   });
 
-  it('no welcome when asking for the pools fails', async () => {
-    listSourcesMock.mockRejectedValue(new Error('nope'));
+  it('with no stations, the welcome says so and offers New station, no command to type', async () => {
     getStationsMock.mockResolvedValueOnce([]);
     render(Page);
-    await screen.findByTestId('no-stations');
+    const welcome = await screen.findByTestId('welcome');
+    expect(welcome).toHaveTextContent(/no stations yet/i);
+    expect(welcome).not.toHaveTextContent(/python|bootstrap/i);
+    expect(screen.getByTestId('welcome-new-station')).toHaveAttribute('href', '/stations/new');
+  });
+
+  it('no welcome while loading or when the server is not answering', async () => {
+    getStationsMock.mockRejectedValueOnce(new FakeApiError(503, 'down'));
+    render(Page);
+    expect(screen.queryByTestId('welcome')).toBeNull();
+    await screen.findByTestId('backend-down');
     expect(screen.queryByTestId('welcome')).toBeNull();
   });
 

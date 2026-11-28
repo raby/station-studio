@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getStations, listSources, ApiError } from '$lib/api';
+  import { getStations, ApiError } from '$lib/api';
   import type { StationSummary } from '$lib/api';
   import {
     DEFAULT_CONTROLS,
@@ -20,29 +20,24 @@
   // list is short enough that a fresh default each visit is fine.
   let controls: StationListControls = { ...DEFAULT_CONTROLS };
 
-  // How many source pools are imported: none means a first run, so the
-  // welcome shows. null while unknown (or if asking failed), which
-  // keeps the welcome hidden rather than showing it wrongly.
-  let poolCount: number | null = null;
-
   async function load() {
     loading = true;
     error = null;
-    // The pools only decide the welcome: a failure there leaves the list.
-    const pools = listSources().then((p) => p.length, () => null);
     try {
       stations = await getStations();
     } catch (e) {
       error = e instanceof ApiError ? e.message : String(e);
     } finally {
-      poolCount = await pools;
       loading = false;
     }
   }
 
   onMount(load);
 
-  $: firstRun = poolCount === 0;
+  // A first run, so the welcome shows: no station has a week yet. Not
+  // "no pools": the starter stations' sample pools are imported on the
+  // first start, so a new install always has some.
+  $: firstRun = !stations.some((s) => s.playlist_count > 0);
 
   $: cadences = availableCadences(stations);
   $: visible = filterSortStations(stations, controls);
@@ -81,22 +76,7 @@
     </div>
   </header>
 
-  {#if loading}
-    <p>Loading…</p>
-  {:else if error}
-    <div class="notice" role="alert" data-testid="backend-down">
-      <p><strong>Station Studio isn't answering.</strong> If you closed it,
-      open it again, then try again.</p>
-      <button type="button" class="btn" data-testid="try-again" on:click={load}>
-        Try again
-      </button>
-      <details>
-        <summary>Details</summary>
-        <p class="error">{error}</p>
-      </details>
-    </div>
-  {:else}
-  {#if firstRun}
+  {#if !loading && !error && firstRun}
     <section class="welcome" aria-labelledby="welcome-title" data-testid="welcome">
       <h2 id="welcome-title">Welcome to Station Studio</h2>
       <p class="sub">Three steps to your first week of playlists.</p>
@@ -115,9 +95,11 @@
           <div>
             <strong>Pick a station.</strong>
             {#if stations.length > 0}
-              Open one of the stations below, or make your own.
+              Open one of the stations below, or make your own. The starter
+              stations come with sample music, so they work straight away.
             {:else}
-              Make a station: its name, the pools it plays from, and its rules.
+              You have no stations yet: make one, with its name, the pools
+              it plays from, and its rules.
             {/if}
           </div>
           <a href="/stations/new" class="btn" data-testid="welcome-new-station">New station</a>
@@ -133,14 +115,23 @@
       <p class="more"><a href="/help#help-start">More in Help</a></p>
     </section>
   {/if}
-  {#if stations.length === 0}
-    <div class="empty" data-testid="no-stations">
-      <p>No stations yet.</p>
-      <a href="/stations/new" class="btn-primary new">
-        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
-        New station
-      </a>
+
+  {#if loading}
+    <p>Loading…</p>
+  {:else if error}
+    <div class="notice" role="alert" data-testid="backend-down">
+      <p><strong>Station Studio isn't answering.</strong> If you closed it,
+      open it again, then try again.</p>
+      <button type="button" class="btn" data-testid="try-again" on:click={load}>
+        Try again
+      </button>
+      <details>
+        <summary>Details</summary>
+        <p class="error">{error}</p>
+      </details>
     </div>
+  {:else if stations.length === 0}
+    <!-- The welcome above says how to make one. -->
   {:else}
     <!-- §16.12 controls: search + filter chips + sort. -->
     <div class="controls" data-testid="list-controls">
@@ -242,7 +233,6 @@
         {/each}
       </ul>
     {/if}
-  {/if}
   {/if}
 </main>
 
@@ -462,8 +452,7 @@
     color: var(--danger);
   }
   .notice,
-  .welcome,
-  .empty {
+  .welcome {
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -473,8 +462,7 @@
   .notice {
     border-color: var(--warn);
   }
-  .notice p,
-  .empty p {
+  .notice p {
     margin: 0 0 10px;
   }
   .notice details {

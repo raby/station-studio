@@ -1981,6 +1981,8 @@
    *  edits were made against the old layout, so they go too (and the
    *  question says so). */
   async function handleRebuildLayout() {
+    // A Save of staged edits is in flight: let it land first.
+    if (saving) return;
     const staged = hasStagedEdits
       ? ` Your ${opLog.length} unsaved edit${opLog.length === 1 ? '' : 's'} will be discarded too.`
       : '';
@@ -1993,7 +1995,9 @@
       danger: true,
     });
     if (!ok) return;
-    if (hasStagedEdits) await _resetStagedState();
+    // Discarding refetches the layout (and its token); if that fails,
+    // its error shows and nothing is rebuilt.
+    if (hasStagedEdits && !(await _resetStagedState())) return;
     await withSaveLifecycle(
       () => rebuildSidecar(slug, updatedAt),
       'rebuilt',

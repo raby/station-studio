@@ -867,7 +867,10 @@ def rebuild_sidecar(
     template = copy.deepcopy(station.template)
     try:
         sidecar = derive_sidecar(template)
-    except EditorMetadataError:
+    except (KeyError, ValueError, TemplateError):
+        # What populate_db_sidecars catches too: row_template stations
+        # (EditorMetadataError, a ValueError) and templates the
+        # heuristic can't read. Either way the one-section layout.
         sidecar = synthesize_trivial_sidecar(template)
     return _finish_sidecar_mutation(station, sidecar, db)
 

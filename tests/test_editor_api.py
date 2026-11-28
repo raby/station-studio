@@ -1896,6 +1896,25 @@ def test_rebuild_sidecar_row_template_falls_back_to_one_section(editor_api):
     assert len(r.json()["sidecar"]["sections"]) == 1
 
 
+@pytest.mark.parametrize("exc", [KeyError("layout"), ValueError("bad"), EditorMetadataError("no")])
+def test_rebuild_sidecar_falls_back_when_derive_fails(editor_api, monkeypatch, exc):
+    """Whatever derive_sidecar can't do (the same errors start-up's
+    populate_db_sidecars catches) gives the one-section layout, not a 500."""
+    import api.routers.editor as editor_router
+
+    def boom(_template):
+        raise exc
+
+    monkeypatch.setattr(editor_router, "derive_sidecar", boom)
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.post("/api/stations/comp/sidecar/rebuild", json={
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 200, r.json()
+    assert len(r.json()["sidecar"]["sections"]) == 1
+
+
 def test_rebuild_sidecar_409_on_stale_token(editor_api):
     client, Session, _dir = editor_api
     _composition_station(Session, "comp")

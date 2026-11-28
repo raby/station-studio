@@ -179,10 +179,11 @@
    *   2. Next GET returns `[]` (the REGISTRY default from
    *      `engine.rules.RULE_LIST_DEFAULTS`), NOT
    *      `["REFERENCE_ARCHIVE"]` (the TEMPLATE default).
-   *   3. The template default reappears on the next
-   *      `seed_station` run (e.g. server restart) — the
-   *      only-set-if-absent logic in seed_station re-applies
-   *      the template's rules: block.
+   *   3. The template default reappears only on the next
+   *      `seed_station` run, and start-up runs that only when the
+   *      database has no stations — so in the app, not on a
+   *      restart. (`make seed-stations` re-applies it in a dev
+   *      checkout: only-set-if-absent in seed_station.)
    *
    * So "Reset" really means "Clear my override" not "Restore
    * the factory default." The button label is technically
@@ -327,13 +328,14 @@
   {#if showReset}
     <!--
       §16.14.t11 c1 review F1: name the trap honestly.
-      "Reset" gives the REGISTRY default, not the template
-      default. Restart restores the template value via
-      only-set-if-absent. See ListRuleRow.svelte reset() docstring.
+      "Clear override" gives the REGISTRY default, not the template
+      default. A restart doesn't bring the template's value back:
+      start-up only seeds stations into an empty database (see
+      api/main.py's lifespan), so the hint promises neither.
     -->
     <p id="list-rule-reset-hint-{rule.key}" class="reset-hint">
-      Removes the current value. If the station's template sets one
-      for this rule, it comes back the next time Station Studio starts.
+      Clears this station's value, so the rule goes back to Station
+      Studio's default.
     </p>
   {/if}
 

@@ -739,6 +739,46 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
     expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
+  it('Rebuild the layout with staged edits: the question says they go, then they do', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('sectionsReorder', { layoutOrder: ['all-slots'] });
+    });
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
+    rebuildSidecarMock.mockReset();
+    rebuildSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(), sidecar: makeSidecar(), updated_at: 'ts-rebuilt',
+    });
+    const loadsBefore = getStationSidecarMock.mock.calls.length;
+    await act(async () => {
+      fireEditorCanvasEvent('rebuildLayout', null);
+    });
+    await waitFor(() => expect(rebuildSidecarMock).toHaveBeenCalledTimes(1));
+    expect(confirmDialogMock.mock.calls[0][0].body).toMatch(/1 unsaved edit will be discarded/);
+    // Discarded first (a fresh load), so the rebuild isn't racing them.
+    expect(getStationSidecarMock.mock.calls.length).toBeGreaterThan(loadsBefore);
+    expect(screen.queryByTestId('staged-save')).toBeNull();
+  });
+
+  it('Rebuild the layout stops if discarding the staged edits fails', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('sectionsReorder', { layoutOrder: ['all-slots'] });
+    });
+    await screen.findByTestId('staged-save');
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
+    rebuildSidecarMock.mockReset();
+    getStationSidecarMock.mockRejectedValueOnce(new Error('offline'));
+    await act(async () => {
+      fireEditorCanvasEvent('rebuildLayout', null);
+    });
+    await waitFor(() => expect(screen.getByText(/offline/)).toBeInTheDocument());
+    expect(rebuildSidecarMock).not.toHaveBeenCalled();
+  });
+
   it('moveBlock — blockMove event → opLog grows (§16.2.6 c3d)', async () => {
     await mountAndAwaitStub();
     await act(async () => {
