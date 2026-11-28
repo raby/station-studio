@@ -35,9 +35,6 @@ this project uses semantic versioning.
   - It now shows as the station's default rather than as overridden.
   - If you'd deleted the pool it names, generating now says so: remove
     the pool from the rule to carry on.
-
-### Fixed
-
 - `station-studio generate` on the command line now generates as the
   app does:
   - Without `--seed`, it works for stations with randomness on (the
