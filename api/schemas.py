@@ -372,8 +372,11 @@ class RuleOut(BaseModel):
     """One rule's effective state for a station.
 
     `value` is what the engine will see; `default_value` is the
-    engine's fallback when no override exists; `is_override` tells
-    a UI whether to render "set" vs "default" controls.
+    station's own default, what `value` is when nothing is stored:
+    its template's value for a rule its `rules:` block declares, else
+    the registry's (`engine.rules.station_declared_rules`).
+    `is_override` is whether `value` differs from that default, not
+    whether a value is stored; a UI shows "overridden" and Reset by it.
 
     §16.14.t10 — broadened to cover both int + list rules:
 

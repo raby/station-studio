@@ -681,3 +681,32 @@ def test_station_rule_defaults_reads_the_rules_block():
     assert station_rule_defaults("x", {"rules": {
         "artist_dedup_window": 5, "cross_pool_dedup_sources": ["A"],
     }}) == {"artist_dedup_window": 5, "cross_pool_dedup_sources": ["A"]}
+
+
+def test_a_fork_generates_the_same_week_as_its_original(api, tmp_path):
+    """End to end through generation: the starter and a fork of it, same
+    seed, same songs. Before, the fork had no Rule rows, so it skipped
+    the starter's cross-pool dedup and could play REFERENCE_ARCHIVE
+    tracks the starter rules out."""
+    from engine.models import Playlist
+    from engine.seeding import _REPO_STATIONS_DIR, auto_import_starter_pools
+
+    client, Session = api
+    _seed_starter(Session, tmp_path)
+    with Session() as db:
+        auto_import_starter_pools(db, _REPO_STATIONS_DIR)
+        db.commit()
+    assert client.post("/api/stations/starter/fork", json={
+        "new_slug": "my-starter", "new_name": "My starter",
+    }).status_code == 201
+
+    for slug in ("starter", "my-starter"):
+        r = client.post(f"/api/stations/{slug}/generate", json={"week": 1, "seed": 5})
+        assert r.status_code == 201, r.json()
+
+    with Session() as db:
+        weeks = {
+            p.station.slug: [e.track.persistent_id for e in p.entries]
+            for p in db.query(Playlist).all()
+        }
+    assert weeks["starter"] and weeks["starter"] == weeks["my-starter"]
